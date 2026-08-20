@@ -6,6 +6,7 @@ sealed class Screen(val route: String) {
         fun createRoute(genre: String) = "category/$genre"
     }
     object Search : Screen("search")
+    object Discover : Screen("discover")
     object BookDetail : Screen("book_detail/{bookId}") {
         fun createRoute(bookId: Long) = "book_detail/$bookId"
     }

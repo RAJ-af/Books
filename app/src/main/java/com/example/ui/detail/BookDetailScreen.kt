@@ -328,10 +328,10 @@ fun BookDetailScreen(
                                         )
                                         Surface(
                                             shape = RoundedCornerShape(4.dp),
-                                            color = ObsidianBlack
+                                            color = if (currentBook.source == "internet_archive") Color(0xFF2E6F40) else ObsidianBlack
                                         ) {
                                             Text(
-                                                text = "PDF",
+                                                text = if (currentBook.source == "internet_archive") "INTERNET ARCHIVE" else "PDF",
                                                 color = Color.White,
                                                 fontSize = 9.sp,
                                                 fontWeight = FontWeight.Bold,

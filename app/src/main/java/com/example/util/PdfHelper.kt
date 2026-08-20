@@ -110,6 +110,62 @@ object PdfHelper {
         }
     }
 
+    suspend fun processLocalPdfFile(
+        context: Context,
+        pdfFile: File,
+        title: String,
+        author: String
+    ): Result<PdfImportResult> = withContext(Dispatchers.IO) {
+        try {
+            if (!pdfFile.exists() || pdfFile.length() == 0L) {
+                return@withContext Result.failure(IllegalStateException("Downloaded file is empty or missing"))
+            }
+
+            val coversDir = File(context.filesDir, "imported_covers").apply { if (!exists()) mkdirs() }
+            val timestamp = System.currentTimeMillis()
+            val savedCoverFile = File(coversDir, "cover_${timestamp}.png")
+
+            var pageCount = 1
+            val pfd = ParcelFileDescriptor.open(pdfFile, ParcelFileDescriptor.MODE_READ_ONLY)
+            val renderer = PdfRenderer(pfd)
+            try {
+                pageCount = renderer.pageCount
+                if (pageCount > 0) {
+                    val firstPage = renderer.openPage(0)
+                    val targetWidth = 600
+                    val targetHeight = ((targetWidth.toFloat() / firstPage.width.toFloat()) * firstPage.height.toFloat()).toInt().coerceAtLeast(100)
+                    val coverBitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
+                    coverBitmap.eraseColor(android.graphics.Color.WHITE)
+
+                    firstPage.render(coverBitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    firstPage.close()
+
+                    FileOutputStream(savedCoverFile).use { out ->
+                        coverBitmap.compress(Bitmap.CompressFormat.PNG, 95, out)
+                    }
+                }
+            } finally {
+                renderer.close()
+                pfd.close()
+            }
+
+            val sizeInMb = pdfFile.length() / (1024f * 1024f)
+            val formattedSize = if (sizeInMb >= 1f) String.format("%.1f MB", sizeInMb) else "${pdfFile.length() / 1024} KB"
+
+            Result.success(
+                PdfImportResult(
+                    pdfPath = pdfFile.absolutePath,
+                    coverImagePath = savedCoverFile.absolutePath,
+                    pageCount = pageCount,
+                    guessedTitle = title.ifBlank { "Internet Archive Document" },
+                    fileSizeFormatted = formattedSize
+                )
+            )
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     suspend fun renderPageBitmap(
         pdfPath: String,
         pageIndex: Int,

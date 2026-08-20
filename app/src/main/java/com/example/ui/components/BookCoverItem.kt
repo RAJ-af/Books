@@ -175,6 +175,22 @@ fun BookCoverItem(
 @Composable
 fun BookCoverArt(book: Book) {
     if (book.coverImageUri.isNotBlank()) {
+        if (book.coverImageUri.startsWith("http://") || book.coverImageUri.startsWith("https://")) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFFEDE9DF))
+            ) {
+                AsyncImage(
+                    model = book.coverImageUri,
+                    contentDescription = book.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+            return
+        }
+
         val coverFile = File(book.coverImageUri)
         if (coverFile.exists()) {
             Box(

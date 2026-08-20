@@ -24,9 +24,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PictureAsPdf
@@ -64,6 +66,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.ui.theme.ContentSerif
 import com.example.ui.theme.EditorialSerif
 import com.example.ui.theme.ObsidianBlack
 import com.example.ui.theme.SoftSepiaSurface
@@ -80,6 +83,7 @@ import java.io.File
 fun AddBookBottomSheet(
     availableGenres: List<String> = listOf("Design", "Psychology", "Novels"),
     onDismiss: () -> Unit,
+    onBrowseInternetArchive: () -> Unit,
     onAddManualBook: (title: String, author: String, genre: String, description: String, colorHex: String) -> Unit,
     onAddPdfBook: (title: String, author: String, genre: String, description: String, pdfPath: String, coverPath: String, pageCount: Int, colorHex: String) -> Unit
 ) {
@@ -153,7 +157,7 @@ fun AddBookBottomSheet(
             ) {
                 Column {
                     Text(
-                        text = if (importedPdfResult != null) "Import PDF Book" else "Add to Library",
+                        text = if (importedPdfResult != null) "Import PDF Book" else "Add Books",
                         style = MaterialTheme.typography.headlineSmall.copy(
                             fontFamily = EditorialSerif,
                             fontWeight = FontWeight.Bold,
@@ -162,7 +166,7 @@ fun AddBookBottomSheet(
                         )
                     )
                     Text(
-                        text = if (importedPdfResult != null) "Review metadata and confirm import" else "Import PDF document or create entry",
+                        text = if (importedPdfResult != null) "Review metadata and confirm import" else "Discover public-domain books or import local PDF",
                         style = MaterialTheme.typography.bodySmall.copy(
                             fontFamily = SystemSans,
                             color = TextMuted,
@@ -190,6 +194,88 @@ fun AddBookBottomSheet(
             }
 
             Spacer(modifier = Modifier.height(16.dp))
+
+            // Option 1: "Browse Internet Archive" Banner (Featured)
+            if (importedPdfResult == null) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
+                        .clickable {
+                            onDismiss()
+                            onBrowseInternetArchive()
+                        }
+                        .testTag("browse_internet_archive_button"),
+                    shape = RoundedCornerShape(18.dp),
+                    color = ObsidianBlack,
+                    shadowElevation = 3.dp
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(46.dp)
+                                .clip(CircleShape)
+                                .background(Color.White.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CloudDownload,
+                                contentDescription = "Internet Archive",
+                                tint = Color(0xFFE89A5A),
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(14.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "Browse Internet Archive",
+                                    fontFamily = SystemSans,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp,
+                                    color = Color.White
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = Color(0xFF2E6F40)
+                                ) {
+                                    Text(
+                                        text = "FREE",
+                                        color = Color.White,
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Black,
+                                        fontFamily = SystemSans,
+                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                    )
+                                }
+                            }
+                            Text(
+                                text = "Search & import millions of public-domain books",
+                                fontFamily = ContentSerif,
+                                fontSize = 12.5.sp,
+                                color = Color.White.copy(alpha = 0.75f)
+                            )
+                        }
+
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = Color.White.copy(alpha = 0.8f),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+            }
 
             // PDF Import Action Card / Preview
             if (isProcessingPdf) {
@@ -240,7 +326,7 @@ fun AddBookBottomSheet(
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(48.dp)
+                                .size(46.dp)
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(ObsidianBlack),
                             contentAlignment = Alignment.Center
@@ -249,22 +335,22 @@ fun AddBookBottomSheet(
                                 imageVector = Icons.Default.PictureAsPdf,
                                 contentDescription = "PDF",
                                 tint = Color(0xFFE89A5A),
-                                modifier = Modifier.size(26.dp)
+                                modifier = Modifier.size(24.dp)
                             )
                         }
 
-                        Spacer(modifier = Modifier.width(16.dp))
+                        Spacer(modifier = Modifier.width(14.dp))
 
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Select PDF Document",
+                                text = "Upload PDF from Device",
                                 fontFamily = SystemSans,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 15.sp,
                                 color = ObsidianBlack
                             )
                             Text(
-                                text = "Opens Storage Access Framework (SAF)",
+                                text = "Choose document via Android file picker",
                                 fontFamily = SystemSans,
                                 fontSize = 12.5.sp,
                                 color = TextMuted

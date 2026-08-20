@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -68,7 +69,8 @@ fun LibraryScreen(
     viewModel: LibraryViewModel,
     onBookClick: (Long) -> Unit,
     onCategoryClick: (String) -> Unit,
-    onSearchClick: () -> Unit
+    onSearchClick: () -> Unit,
+    onDiscoverClick: () -> Unit = {}
 ) {
     val categorySections by viewModel.categorySections.collectAsStateWithLifecycle()
     val totalBooks by viewModel.totalBookCount.collectAsStateWithLifecycle()
@@ -93,7 +95,8 @@ fun LibraryScreen(
             // Header Section
             item {
                 LibraryHeader(
-                    onSearchClick = onSearchClick
+                    onSearchClick = onSearchClick,
+                    onDiscoverClick = onDiscoverClick
                 )
             }
 
@@ -173,6 +176,10 @@ fun LibraryScreen(
             AddBookBottomSheet(
                 availableGenres = availableGenres,
                 onDismiss = { showAddBookSheet = false },
+                onBrowseInternetArchive = {
+                    showAddBookSheet = false
+                    onDiscoverClick()
+                },
                 onAddManualBook = { title, author, genre, description, colorHex ->
                     viewModel.addNewBook(title, author, genre, description, colorHex)
                     showAddBookSheet = false
@@ -188,13 +195,35 @@ fun LibraryScreen(
 
 @Composable
 fun LibraryHeader(
-    onSearchClick: () -> Unit
+    onSearchClick: () -> Unit,
+    onDiscoverClick: () -> Unit = {}
 ) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 24.dp, vertical = 8.dp)
     ) {
+        // Discover / Internet Archive Button in Top-Left corner
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(top = 4.dp)
+                .size(44.dp)
+                .shadow(elevation = 4.dp, shape = CircleShape, spotColor = ObsidianBlack.copy(alpha = 0.2f))
+                .clip(CircleShape)
+                .background(ObsidianBlack)
+                .clickable(onClick = onDiscoverClick)
+                .testTag("discover_icon_button"),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.CloudDownload,
+                contentDescription = "Discover Free Books",
+                tint = Color.White,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+
         // Circular Black Search Button in Top-Right corner (Apple Books style)
         Box(
             modifier = Modifier

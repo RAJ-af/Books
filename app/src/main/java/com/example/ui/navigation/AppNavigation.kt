@@ -15,6 +15,8 @@ import androidx.navigation.navArgument
 import com.example.ui.category.CategoryGridScreen
 import com.example.ui.detail.BookDetailScreen
 import com.example.ui.detail.BookDetailViewModel
+import com.example.ui.discover.DiscoverScreen
+import com.example.ui.discover.DiscoverViewModel
 import com.example.ui.library.LibraryScreen
 import com.example.ui.library.LibraryViewModel
 import com.example.ui.reader.ReaderScreen
@@ -45,6 +47,30 @@ fun AppNavigation(
                 },
                 onSearchClick = {
                     navController.navigate(Screen.Search.route)
+                },
+                onDiscoverClick = {
+                    navController.navigate(Screen.Discover.route)
+                }
+            )
+        }
+
+        // 2. Discover / Internet Archive Screen
+        composable(Screen.Discover.route) {
+            val discoverViewModel: DiscoverViewModel = viewModel(
+                factory = object : ViewModelProvider.Factory {
+                    @Suppress("UNCHECKED_CAST")
+                    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                        return DiscoverViewModel(application) as T
+                    }
+                }
+            )
+            DiscoverScreen(
+                viewModel = discoverViewModel,
+                onBackClick = { navController.popBackStack() },
+                onBookImported = { bookId ->
+                    navController.navigate(Screen.BookDetail.createRoute(bookId)) {
+                        popUpTo(Screen.Library.route)
+                    }
                 }
             )
         }

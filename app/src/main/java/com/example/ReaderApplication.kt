@@ -2,6 +2,7 @@ package com.example
 
 import android.app.Application
 import com.example.data.local.AppDatabase
+import com.example.data.remote.ArchiveOrgRepository
 import com.example.data.repository.BookRepository
 import com.example.data.settings.ReaderSettingsRepository
 import kotlinx.coroutines.CoroutineScope
@@ -25,6 +26,10 @@ class ReaderApplication : Application() {
 
     val readerSettingsRepository by lazy {
         ReaderSettingsRepository(this)
+    }
+
+    val archiveOrgRepository by lazy {
+        ArchiveOrgRepository(this)
     }
 
     override fun onCreate() {

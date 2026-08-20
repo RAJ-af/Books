@@ -208,6 +208,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 coverImageUri = coverPath,
                 pdfFilePath = pdfPath,
                 isImportedPdf = true,
+                source = "local",
                 colorHex = colorHex
             )
 
