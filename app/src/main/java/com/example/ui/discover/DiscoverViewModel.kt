@@ -6,8 +6,10 @@ import androidx.lifecycle.viewModelScope
 import com.example.ReaderApplication
 import com.example.data.local.entity.Book
 import com.example.data.local.entity.Chapter
-import com.example.data.remote.ArchiveDoc
-import com.example.util.PdfImportResult
+import com.example.data.source.BookSource
+import com.example.data.source.DiscoverResult
+import com.example.data.source.FileType
+import com.example.data.source.UnifiedImportResult
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,8 +22,8 @@ import java.net.UnknownHostException
 sealed class DiscoverUiState {
     object Idle : DiscoverUiState()
     object Loading : DiscoverUiState()
-    data class Success(val books: List<ArchiveDoc>, val query: String) : DiscoverUiState()
-    data class Empty(val query: String) : DiscoverUiState()
+    data class Success(val books: List<DiscoverResult>, val query: String, val sourceId: String) : DiscoverUiState()
+    data class Empty(val query: String, val sourceName: String) : DiscoverUiState()
     data class Error(val message: String, val isNetworkError: Boolean) : DiscoverUiState()
 }
 
@@ -39,14 +41,21 @@ data class PendingImportBook(
     val initialAuthor: String,
     val initialGenre: String,
     val year: String?,
-    val importResult: PdfImportResult,
-    val coverUrl: String
+    val importResult: UnifiedImportResult,
+    val coverUrl: String?,
+    val sourceId: String,
+    val sourceDisplayName: String
 )
 
 class DiscoverViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val archiveRepository = (application as ReaderApplication).archiveOrgRepository
+    private val bookSourceManager = (application as ReaderApplication).bookSourceManager
     private val bookRepository = (application as ReaderApplication).bookRepository
+
+    val availableSources: List<BookSource> = bookSourceManager.sources
+
+    private val _selectedSourceId = MutableStateFlow(availableSources.firstOrNull()?.id ?: "gutenberg")
+    val selectedSourceId: StateFlow<String> = _selectedSourceId.asStateFlow()
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
@@ -65,8 +74,22 @@ class DiscoverViewModel(application: Application) : AndroidViewModel(application
     private var searchJob: Job? = null
 
     init {
-        // Initial suggested search for classic literature
+        // Initial search on default source (Project Gutenberg)
         performSearch("Sherlock Holmes")
+    }
+
+    fun selectSource(sourceId: String) {
+        if (_selectedSourceId.value == sourceId) return
+        _selectedSourceId.value = sourceId
+        val currentQuery = _searchQuery.value.ifBlank {
+            when (sourceId) {
+                "standard_ebooks" -> "Pride and Prejudice"
+                "doab" -> "Science"
+                "gutenberg" -> "Frankenstein"
+                else -> "Sherlock Holmes"
+            }
+        }
+        performSearch(currentQuery, sourceId)
     }
 
     fun onSearchQueryChanged(query: String) {
@@ -79,26 +102,33 @@ class DiscoverViewModel(application: Application) : AndroidViewModel(application
 
         searchJob = viewModelScope.launch {
             delay(400) // Debounce typing
-            performSearch(query)
+            performSearch(query, _selectedSourceId.value)
         }
     }
 
-    fun performSearch(query: String) {
+    fun performSearch(query: String, sourceId: String = _selectedSourceId.value) {
         if (query.isBlank()) return
 
-        viewModelScope.launch {
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
             _uiState.value = DiscoverUiState.Loading
-            val result = archiveRepository.searchBooks(query.trim())
-            result.onSuccess { docs ->
-                if (docs.isEmpty()) {
-                    _uiState.value = DiscoverUiState.Empty(query.trim())
+            val source = bookSourceManager.getSource(sourceId)
+            val result = bookSourceManager.search(sourceId, query.trim())
+
+            result.onSuccess { books ->
+                if (books.isEmpty()) {
+                    _uiState.value = DiscoverUiState.Empty(query.trim(), source.displayName)
                 } else {
-                    _uiState.value = DiscoverUiState.Success(books = docs, query = query.trim())
+                    _uiState.value = DiscoverUiState.Success(
+                        books = books,
+                        query = query.trim(),
+                        sourceId = sourceId
+                    )
                 }
             }.onFailure { err ->
                 val isNetwork = err is UnknownHostException || err is IOException
                 val msg = if (isNetwork) {
-                    "Unable to reach Internet Archive. Please check your network connection."
+                    "Unable to reach ${source.displayName}. Please check your network connection."
                 } else {
                     err.localizedMessage ?: "Failed to search books. Please try again."
                 }
@@ -108,19 +138,19 @@ class DiscoverViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun retrySearch() {
-        val current = _searchQuery.value.ifBlank { "Classic Literature" }
-        performSearch(current)
+        val current = _searchQuery.value.ifBlank {
+            if (_selectedSourceId.value == "doab") "Science" else "Classic Literature"
+        }
+        performSearch(current, _selectedSourceId.value)
     }
 
-    fun downloadAndImport(book: ArchiveDoc) {
-        val identifier = book.identifier
+    fun downloadAndImport(book: DiscoverResult) {
+        val identifier = book.id
         updateDownloadStatus(identifier, ItemDownloadStatus.Downloading(0.05f))
 
         viewModelScope.launch {
-            val result = archiveRepository.downloadAndProcessPdf(
-                identifier = identifier,
-                title = book.title ?: "Public Domain Book",
-                creator = book.creator ?: "Internet Archive",
+            val result = bookSourceManager.downloadAndProcess(
+                result = book,
                 onProgress = { progress ->
                     if (progress >= 0.99f) {
                         updateDownloadStatus(identifier, ItemDownloadStatus.Processing)
@@ -132,27 +162,32 @@ class DiscoverViewModel(application: Application) : AndroidViewModel(application
 
             result.onSuccess { importResult ->
                 updateDownloadStatus(identifier, ItemDownloadStatus.Idle)
-                // Determine a nice default genre
+                // Determine default genre
                 val guessedGenre = when {
-                    (book.title ?: "").contains("Design", true) -> "Design"
-                    (book.title ?: "").contains("Psychology", true) -> "Psychology"
+                    book.title.contains("Design", true) -> "Design"
+                    book.title.contains("Psychology", true) -> "Psychology"
+                    book.title.contains("Science", true) -> "Non-Fiction"
+                    book.title.contains("Technology", true) -> "Design"
                     (book.description ?: "").contains("Psychology", true) -> "Psychology"
                     else -> "Novels"
                 }
 
                 _pendingImport.value = PendingImportBook(
                     identifier = identifier,
-                    initialTitle = book.title?.trim() ?: importResult.guessedTitle,
-                    initialAuthor = book.creator?.trim() ?: "Public Domain Author",
+                    initialTitle = book.title.ifBlank { importResult.guessedTitle },
+                    initialAuthor = book.author.ifBlank { "Classic Author" },
                     initialGenre = guessedGenre,
                     year = book.year,
                     importResult = importResult,
-                    coverUrl = book.coverThumbnailUrl
+                    coverUrl = book.coverUrl,
+                    sourceId = book.sourceId,
+                    sourceDisplayName = book.sourceDisplayName
                 )
             }.onFailure { error ->
                 val errorMsg = error.localizedMessage ?: "Download failed"
-                if (errorMsg.contains("Not available for direct download", ignoreCase = true)) {
-                    updateDownloadStatus(identifier, ItemDownloadStatus.Unavailable("Not available for direct download (borrow-restricted or non-PDF)"))
+                if (errorMsg.contains("Direct download is not available", ignoreCase = true) ||
+                    errorMsg.contains("not available for direct download", ignoreCase = true)) {
+                    updateDownloadStatus(identifier, ItemDownloadStatus.Unavailable("Direct file download is not available for this title"))
                 } else {
                     updateDownloadStatus(identifier, ItemDownloadStatus.Failed(errorMsg))
                 }
@@ -175,31 +210,64 @@ class DiscoverViewModel(application: Application) : AndroidViewModel(application
         val pending = _pendingImport.value ?: return
 
         viewModelScope.launch {
-            val pdfResult = pending.importResult
+            val unifiedRes = pending.importResult
+            val isEpub = unifiedRes.fileType == FileType.EPUB
+
             val book = Book(
                 title = title.ifBlank { pending.initialTitle },
                 author = author.ifBlank { pending.initialAuthor },
                 genre = genre.ifBlank { "Novels" },
-                description = description.ifBlank { "Public Domain book from Internet Archive (${pending.year ?: "Public Domain"}). ${pdfResult.pageCount} pages." },
-                rating = 4.8f,
-                pageCount = pdfResult.pageCount.coerceAtLeast(1),
-                coverImageUri = pdfResult.coverImagePath.ifBlank { pending.coverUrl },
-                pdfFilePath = pdfResult.pdfPath,
-                isImportedPdf = true,
-                source = "internet_archive",
+                description = description.ifBlank {
+                    if (isEpub) {
+                        "Classic EPUB book from ${pending.sourceDisplayName}. ${unifiedRes.pageCount} estimated pages."
+                    } else {
+                        "PDF document from ${pending.sourceDisplayName} (${pending.year ?: "Public Domain"}). ${unifiedRes.pageCount} pages."
+                    }
+                },
+                rating = 4.9f,
+                pageCount = unifiedRes.pageCount.coerceAtLeast(1),
+                coverImageUri = unifiedRes.coverImagePath.ifBlank { pending.coverUrl ?: "" },
+                pdfFilePath = unifiedRes.filePath,
+                isImportedPdf = !isEpub,
+                fileType = if (isEpub) "EPUB" else "PDF",
+                source = pending.sourceId,
                 colorHex = colorHex
             )
 
-            // Generate one chapter per PDF page
-            val chapters = (1..book.pageCount).map { pageNum ->
-                Chapter(
-                    bookId = 0L,
-                    number = pageNum,
-                    title = "Page $pageNum",
-                    subtitle = if (pageNum == 1) "Cover & Title" else "Page $pageNum",
-                    estimatedReadMinutes = 2,
-                    content = ""
+            val chapters = if (isEpub && unifiedRes.epubChapters.isNotEmpty()) {
+                unifiedRes.epubChapters.map { ep ->
+                    Chapter(
+                        bookId = 0L,
+                        number = ep.number,
+                        title = ep.title,
+                        subtitle = ep.subtitle,
+                        estimatedReadMinutes = ep.estimatedReadMinutes,
+                        content = ep.content
+                    )
+                }
+            } else if (isEpub) {
+                listOf(
+                    Chapter(
+                        bookId = 0L,
+                        number = 1,
+                        title = "Chapter 1",
+                        subtitle = "Full Edition",
+                        estimatedReadMinutes = 10,
+                        content = "Welcome to ${book.title} by ${book.author}."
+                    )
                 )
+            } else {
+                // PDF pages
+                (1..book.pageCount).map { pageNum ->
+                    Chapter(
+                        bookId = 0L,
+                        number = pageNum,
+                        title = "Page $pageNum",
+                        subtitle = if (pageNum == 1) "Cover & Title" else "Page $pageNum",
+                        estimatedReadMinutes = 2,
+                        content = ""
+                    )
+                }
             }
 
             val insertedId = bookRepository.insertBookWithChapters(book, chapters)

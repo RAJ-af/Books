@@ -1,9 +1,5 @@
 package com.example.ui.discover
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -27,12 +23,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -81,7 +77,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
-import com.example.data.remote.ArchiveDoc
+import com.example.data.source.BookSource
+import com.example.data.source.DiscoverResult
 import com.example.ui.theme.ContentSerif
 import com.example.ui.theme.CreamBackground
 import com.example.ui.theme.EditorialSerif
@@ -96,14 +93,14 @@ import java.io.File
 private val SUGGESTED_TOPICS = listOf(
     "Sherlock Holmes",
     "Pride and Prejudice",
-    "Alice in Wonderland",
-    "Frankenstein",
-    "The Art of War",
+    "Science",
     "Philosophy",
+    "Design",
     "Psychology",
-    "Design and Typography",
-    "Ancient History",
-    "Classic Poetry"
+    "History",
+    "Technology",
+    "Alice in Wonderland",
+    "Frankenstein"
 )
 
 private val BOOK_PALETTE_COLORS = listOf(
@@ -124,6 +121,7 @@ fun DiscoverScreen(
 ) {
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val selectedSourceId by viewModel.selectedSourceId.collectAsStateWithLifecycle()
     val downloadStatusMap by viewModel.downloadStatusMap.collectAsStateWithLifecycle()
     val pendingImport by viewModel.pendingImport.collectAsStateWithLifecycle()
     val genres by viewModel.availableGenres.collectAsStateWithLifecycle(initialValue = listOf("Design", "Psychology", "Novels"))
@@ -135,7 +133,10 @@ fun DiscoverScreen(
         containerColor = CreamBackground,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            DiscoverTopBar(onBackClick = onBackClick)
+            DiscoverTopBar(
+                onBackClick = onBackClick,
+                activeSourceName = viewModel.availableSources.find { it.id == selectedSourceId }?.displayName ?: "Public Domain"
+            )
         }
     ) { innerPadding ->
         Column(
@@ -150,18 +151,28 @@ fun DiscoverScreen(
                 onSearchSubmit = { viewModel.performSearch(it) }
             )
 
+            // Source Selector Chips Row
+            DiscoverSourceSelectorRow(
+                sources = viewModel.availableSources,
+                selectedSourceId = selectedSourceId,
+                onSourceSelected = { sourceId ->
+                    viewModel.selectSource(sourceId)
+                }
+            )
+
             // Suggested Topics Row
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 20.dp, vertical = 6.dp),
+                    .padding(horizontal = 20.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 SUGGESTED_TOPICS.forEach { topic ->
+                    val isSelected = searchQuery.equals(topic, ignoreCase = true)
                     Surface(
                         shape = RoundedCornerShape(percent = 50),
-                        color = if (searchQuery.equals(topic, ignoreCase = true)) ObsidianBlack else SoftSepiaSurface,
+                        color = if (isSelected) ObsidianBlack else SoftSepiaSurface,
                         modifier = Modifier
                             .clip(RoundedCornerShape(percent = 50))
                             .clickable {
@@ -174,15 +185,15 @@ fun DiscoverScreen(
                             style = MaterialTheme.typography.labelMedium.copy(
                                 fontFamily = SystemSans,
                                 fontWeight = FontWeight.Medium,
-                                color = if (searchQuery.equals(topic, ignoreCase = true)) Color.White else ObsidianBlack
+                                color = if (isSelected) Color.White else ObsidianBlack
                             ),
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                            modifier = Modifier.padding(horizontal = 13.dp, vertical = 6.dp)
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
             // Main Content Area based on UI State
             Box(
@@ -192,6 +203,7 @@ fun DiscoverScreen(
             ) {
                 when (val state = uiState) {
                     is DiscoverUiState.Loading -> {
+                        val activeSource = viewModel.availableSources.find { it.id == selectedSourceId }
                         Box(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center
@@ -206,7 +218,7 @@ fun DiscoverScreen(
                                     modifier = Modifier.size(36.dp)
                                 )
                                 Text(
-                                    text = "Searching Internet Archive…",
+                                    text = "Searching ${activeSource?.displayName ?: "Library"}…",
                                     style = MaterialTheme.typography.bodyMedium.copy(
                                         fontFamily = ContentSerif,
                                         color = TextMuted,
@@ -243,7 +255,7 @@ fun DiscoverScreen(
                                     }
                                 }
                                 Text(
-                                    text = "No Public-Domain Books Found",
+                                    text = "No Books Found",
                                     style = MaterialTheme.typography.titleMedium.copy(
                                         fontFamily = EditorialSerif,
                                         fontWeight = FontWeight.Bold,
@@ -253,7 +265,7 @@ fun DiscoverScreen(
                                     textAlign = TextAlign.Center
                                 )
                                 Text(
-                                    text = "We couldn't find matches for \"${state.query}\". Try searching for author names, classical titles, or broader topics.",
+                                    text = "No matching downloadable results on ${state.sourceName} for \"${state.query}\". Try another search keyword or switch sources above.",
                                     style = MaterialTheme.typography.bodyMedium.copy(
                                         fontFamily = ContentSerif,
                                         color = TextMuted,
@@ -337,15 +349,15 @@ fun DiscoverScreen(
                         ) {
                             items(
                                 items = state.books,
-                                key = { it.identifier }
-                            ) { bookDoc ->
-                                val status = downloadStatusMap[bookDoc.identifier] ?: ItemDownloadStatus.Idle
+                                key = { "${it.sourceId}_${it.id}" }
+                            ) { book ->
+                                val status = downloadStatusMap[book.id] ?: ItemDownloadStatus.Idle
 
-                                ArchiveBookRowCard(
-                                    book = bookDoc,
+                                DiscoverBookRowCard(
+                                    book = book,
                                     downloadStatus = status,
                                     onDownloadClick = {
-                                        viewModel.downloadAndImport(bookDoc)
+                                        viewModel.downloadAndImport(book)
                                     }
                                 )
                             }
@@ -361,7 +373,7 @@ fun DiscoverScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "Search books to explore Internet Archive",
+                                text = "Select a source and search to discover books",
                                 style = MaterialTheme.typography.bodyMedium.copy(
                                     fontFamily = ContentSerif,
                                     color = TextMuted
@@ -376,7 +388,7 @@ fun DiscoverScreen(
 
     // Confirmation Sheet for Imported Book
     pendingImport?.let { pending ->
-        ArchiveImportConfirmationSheet(
+        DiscoverImportConfirmationSheet(
             pending = pending,
             availableGenres = genres,
             onDismiss = { viewModel.dismissPendingImport() },
@@ -400,7 +412,10 @@ fun DiscoverScreen(
 }
 
 @Composable
-fun DiscoverTopBar(onBackClick: () -> Unit) {
+fun DiscoverTopBar(
+    onBackClick: () -> Unit,
+    activeSourceName: String
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -446,13 +461,101 @@ fun DiscoverTopBar(onBackClick: () -> Unit) {
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
-                    text = "Internet Archive • Free Public Domain",
+                    text = "Open Access & Public Domain Books",
                     style = MaterialTheme.typography.bodySmall.copy(
                         fontFamily = SystemSans,
                         color = TextMuted,
                         fontSize = 11.5.sp
                     )
                 )
+            }
+        }
+    }
+}
+
+@Composable
+fun DiscoverSourceSelectorRow(
+    sources: List<BookSource>,
+    selectedSourceId: String,
+    onSourceSelected: (String) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        sources.forEach { source ->
+            val isSelected = selectedSourceId == source.id
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = if (isSelected) ObsidianBlack else SoftSepiaSurface,
+                shadowElevation = if (isSelected) 3.dp else 0.dp,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .clickable { onSourceSelected(source.id) }
+                    .testTag("source_chip_${source.id}")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    Icon(
+                        imageVector = when (source.id) {
+                            "gutenberg" -> Icons.Default.MenuBook
+                            "standard_ebooks" -> Icons.Default.MenuBook
+                            "doab" -> Icons.Default.MenuBook
+                            else -> Icons.Default.Public
+                        },
+                        contentDescription = null,
+                        tint = if (isSelected) Color.White else ObsidianBlack,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = source.displayName,
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontFamily = SystemSans,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                            color = if (isSelected) Color.White else ObsidianBlack,
+                            fontSize = 13.sp
+                        )
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = when {
+                            isSelected -> Color(0xFFD97706)
+                            source.id == "gutenberg" -> Color(0xFFFDE68A)
+                            source.id == "standard_ebooks" -> Color(0xFFD1FAE5)
+                            source.id == "doab" -> Color(0xFFE5EDE6)
+                            else -> SoftSepiaSurface
+                        }
+                    ) {
+                        Text(
+                            text = when (source.id) {
+                                "gutenberg" -> "FREE EPUB"
+                                "standard_ebooks" -> "QUALITY EPUB"
+                                "doab" -> "OPEN ACCESS"
+                                else -> "FREE ARCHIVE"
+                            },
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontFamily = SystemSans,
+                                fontWeight = FontWeight.Black,
+                                color = when {
+                                    isSelected -> Color.White
+                                    source.id == "gutenberg" -> Color(0xFF92400E)
+                                    source.id == "standard_ebooks" -> Color(0xFF065F46)
+                                    source.id == "doab" -> Color(0xFF2E6F40)
+                                    else -> ObsidianBlack
+                                },
+                                fontSize = 8.5.sp
+                            ),
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp)
+                        )
+                    }
+                }
             }
         }
     }
@@ -473,7 +576,7 @@ fun DiscoverSearchHeader(
             .testTag("discover_search_input"),
         placeholder = {
             Text(
-                text = "Search titles, authors, classics…",
+                text = "Search titles, authors, topics…",
                 style = MaterialTheme.typography.bodyMedium.copy(
                     fontFamily = ContentSerif,
                     color = TextMuted
@@ -514,8 +617,8 @@ fun DiscoverSearchHeader(
 }
 
 @Composable
-fun ArchiveBookRowCard(
-    book: ArchiveDoc,
+fun DiscoverBookRowCard(
+    book: DiscoverResult,
     downloadStatus: ItemDownloadStatus,
     onDownloadClick: () -> Unit
 ) {
@@ -524,7 +627,7 @@ fun ArchiveBookRowCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .testTag("discover_book_card_${book.identifier}"),
+            .testTag("discover_book_card_${book.id}"),
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = WarmOffWhite),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
@@ -551,7 +654,7 @@ fun ArchiveBookRowCard(
                     Box(modifier = Modifier.fillMaxSize()) {
                         AsyncImage(
                             model = ImageRequest.Builder(context)
-                                .data(book.coverThumbnailUrl)
+                                .data(book.coverUrl)
                                 .crossfade(true)
                                 .build(),
                             contentDescription = book.title,
@@ -567,7 +670,7 @@ fun ArchiveBookRowCard(
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Text(
-                        text = book.title ?: "Untitled Document",
+                        text = book.title,
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontFamily = EditorialSerif,
                             fontWeight = FontWeight.Bold,
@@ -580,7 +683,7 @@ fun ArchiveBookRowCard(
                     )
 
                     Text(
-                        text = book.creator ?: "Unknown / Public Domain",
+                        text = book.author,
                         style = MaterialTheme.typography.bodyMedium.copy(
                             fontFamily = ContentSerif,
                             color = TextMuted,
@@ -595,6 +698,33 @@ fun ArchiveBookRowCard(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
+                        // Source Name Badge
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = when (book.sourceId) {
+                                "gutenberg" -> Color(0xFFFDE68A)
+                                "standard_ebooks" -> Color(0xFFD1FAE5)
+                                "doab" -> Color(0xFFE5EDE6)
+                                else -> SoftSepiaSurface
+                            }
+                        ) {
+                            Text(
+                                text = book.sourceDisplayName.uppercase(),
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontFamily = SystemSans,
+                                    fontWeight = FontWeight.Bold,
+                                    color = when (book.sourceId) {
+                                        "gutenberg" -> Color(0xFF92400E)
+                                        "standard_ebooks" -> Color(0xFF065F46)
+                                        "doab" -> Color(0xFF2E6F40)
+                                        else -> ObsidianBlack
+                                    },
+                                    fontSize = 9.5.sp
+                                ),
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+
                         if (!book.year.isNullOrBlank()) {
                             Surface(
                                 shape = RoundedCornerShape(4.dp),
@@ -606,24 +736,25 @@ fun ArchiveBookRowCard(
                                         fontFamily = SystemSans,
                                         fontWeight = FontWeight.SemiBold,
                                         color = ObsidianBlack,
-                                        fontSize = 10.sp
+                                        fontSize = 9.5.sp
                                     ),
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
                             }
                         }
 
+                        val isEpubBook = book.sourceId == "gutenberg" || book.directDownloadUrl?.contains(".epub", true) == true
                         Surface(
                             shape = RoundedCornerShape(4.dp),
-                            color = Color(0xFFE5EDE6)
+                            color = if (isEpubBook) Color(0xFFFEF3C7) else Color(0xFFE5EDE6)
                         ) {
                             Text(
-                                text = "FREE PDF",
+                                text = if (isEpubBook) "FREE EPUB" else "FREE PDF",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontFamily = SystemSans,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF2E6F40),
-                                    fontSize = 10.sp
+                                    color = if (isEpubBook) Color(0xFFB45309) else Color(0xFF2E6F40),
+                                    fontSize = 9.5.sp
                                 ),
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
@@ -642,7 +773,7 @@ fun ArchiveBookRowCard(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(42.dp)
-                            .testTag("download_btn_${book.identifier}"),
+                            .testTag("download_btn_${book.id}"),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = ObsidianBlack,
                             contentColor = Color.White
@@ -680,7 +811,7 @@ fun ArchiveBookRowCard(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "Downloading PDF…",
+                                text = "Downloading from ${book.sourceDisplayName}…",
                                 style = MaterialTheme.typography.labelMedium.copy(
                                     fontFamily = SystemSans,
                                     fontWeight = FontWeight.Medium,
@@ -752,7 +883,7 @@ fun ArchiveBookRowCard(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Not available for direct download (borrow restricted or non-PDF)",
+                                text = downloadStatus.reason,
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     fontFamily = SystemSans,
                                     fontSize = 11.5.sp,
@@ -804,7 +935,7 @@ fun ArchiveBookRowCard(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ArchiveImportConfirmationSheet(
+fun DiscoverImportConfirmationSheet(
     pending: PendingImportBook,
     availableGenres: List<String>,
     onDismiss: () -> Unit,
@@ -851,7 +982,7 @@ fun ArchiveImportConfirmationSheet(
                 )
             )
             Text(
-                text = "Downloaded from Internet Archive (${pending.importResult.pageCount} pages, ${pending.importResult.fileSizeFormatted})",
+                text = "Downloaded from ${pending.sourceDisplayName} (${pending.importResult.pageCount} pages, ${pending.importResult.fileSizeFormatted})",
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontFamily = ContentSerif,
                     color = TextMuted,
@@ -949,7 +1080,7 @@ fun ArchiveImportConfirmationSheet(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            val genreOptions = (availableGenres + listOf("Novels", "Philosophy", "Design", "History")).distinct()
+            val genreOptions = (availableGenres + listOf("Novels", "Philosophy", "Design", "History", "Science")).distinct()
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1044,7 +1175,7 @@ fun ArchiveImportConfirmationSheet(
                             title.trim(),
                             author.trim(),
                             finalGenre.trim(),
-                            "Internet Archive public-domain document (${pending.importResult.pageCount} pages)",
+                            "Open Access book from ${pending.sourceDisplayName} (${pending.importResult.pageCount} pages)",
                             selectedColorHex
                         )
                     },

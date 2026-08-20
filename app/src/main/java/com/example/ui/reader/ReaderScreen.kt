@@ -37,9 +37,11 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.WbSunny
+import com.example.ui.audio.AudiobookPlayerSheet
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -99,6 +101,7 @@ fun ReaderScreen(
     val chapters by viewModel.chapters.collectAsStateWithLifecycle()
     val currentChapterId by viewModel.currentChapterId.collectAsStateWithLifecycle()
     val settings by viewModel.readerSettings.collectAsStateWithLifecycle()
+    val playerState by viewModel.audioPlayerManager.playerState.collectAsStateWithLifecycle()
 
     val currentChapter = chapters.find { it.id == currentChapterId } ?: chapters.firstOrNull()
     val currentChapterIndex = chapters.indexOfFirst { it.id == currentChapter?.id }.let { if (it == -1) 0 else it }
@@ -303,9 +306,11 @@ fun ReaderScreen(
             chapterNumber = currentChapter?.number ?: (currentChapterIndex + 1),
             chapterSubtitle = if (isPdf) (book?.title ?: "PDF Document") else (currentChapter?.subtitle?.takeIf { it.isNotBlank() } ?: (book?.title ?: "Feedback")),
             isPdf = isPdf,
+            hasAudioPlayer = playerState.tracks.isNotEmpty(),
             textColor = textColor,
             onBackClick = onBackClick,
             onFormatClick = { showFormatSheet = true },
+            onAudioClick = { viewModel.audioPlayerManager.showPlayerSheet() },
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .statusBarsPadding()
@@ -351,6 +356,22 @@ fun ReaderScreen(
                 onLineSpacingChange = { viewModel.updateLineSpacing(it) },
                 onThemeChange = { viewModel.updateTheme(it) },
                 onBrightnessChange = { viewModel.updateBrightness(it) }
+            )
+        }
+
+        // Audiobook Player Bottom Sheet
+        if (playerState.isVisible) {
+            AudiobookPlayerSheet(
+                state = playerState,
+                onTogglePlayPause = { viewModel.audioPlayerManager.togglePlayPause() },
+                onSeekTo = { posMs -> viewModel.audioPlayerManager.seekTo(posMs) },
+                onSkipForward = { viewModel.audioPlayerManager.skipForward(10) },
+                onSkipBackward = { viewModel.audioPlayerManager.skipBackward(10) },
+                onNextTrack = { viewModel.audioPlayerManager.nextTrack() },
+                onPreviousTrack = { viewModel.audioPlayerManager.previousTrack() },
+                onSelectSpeed = { speed -> viewModel.audioPlayerManager.setSpeed(speed) },
+                onSelectTrack = { index -> viewModel.audioPlayerManager.playTrackAtIndex(index) },
+                onDismiss = { viewModel.audioPlayerManager.hidePlayerSheet() }
             )
         }
     }
@@ -449,9 +470,11 @@ fun ReaderHeaderTopBar(
     chapterNumber: Int,
     chapterSubtitle: String,
     isPdf: Boolean = false,
+    hasAudioPlayer: Boolean = false,
     textColor: Color,
     onBackClick: () -> Unit,
     onFormatClick: () -> Unit,
+    onAudioClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -513,24 +536,49 @@ fun ReaderHeaderTopBar(
             )
         }
 
-        // Right: Circular dark matte button with "Aa"
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .shadow(3.dp, CircleShape, spotColor = ObsidianBlack.copy(alpha = 0.25f))
-                .clip(CircleShape)
-                .background(Color(0xFF22201E))
-                .clickable(onClick = onFormatClick)
-                .testTag("reader_format_button"),
-            contentAlignment = Alignment.Center
+        // Right: Audio player button (if active) and "Aa" button
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(
-                text = "Aa",
-                fontFamily = EditorialSerif,
-                fontWeight = FontWeight.Bold,
-                fontSize = 16.sp,
-                color = Color.White
-            )
+            if (hasAudioPlayer) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .shadow(3.dp, CircleShape, spotColor = ObsidianBlack.copy(alpha = 0.25f))
+                        .clip(CircleShape)
+                        .background(Color(0xFFD97706))
+                        .clickable(onClick = onAudioClick)
+                        .testTag("reader_audio_button"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Headphones,
+                        contentDescription = "Audiobook Player",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .shadow(3.dp, CircleShape, spotColor = ObsidianBlack.copy(alpha = 0.25f))
+                    .clip(CircleShape)
+                    .background(Color(0xFF22201E))
+                    .clickable(onClick = onFormatClick)
+                    .testTag("reader_format_button"),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Aa",
+                    fontFamily = EditorialSerif,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = Color.White
+                )
+            }
         }
     }
 }

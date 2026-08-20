@@ -16,7 +16,8 @@ data class Book(
     val description: String = "",
     val isImportedPdf: Boolean = false,
     val pdfFilePath: String = "",
-    val source: String = "local", // "local", "seed", "internet_archive"
+    val fileType: String = "TEXT", // "PDF", "EPUB", "TEXT"
+    val source: String = "local", // "local", "seed", "internet_archive", "gutenberg", "doab"
     val colorHex: String = "#E89A5A",
     val accentTint: String = "#D97706"
 )

@@ -27,6 +27,7 @@ class ReaderViewModel(
     private val readerApp = application as ReaderApplication
     private val bookRepository = readerApp.bookRepository
     private val settingsRepository = readerApp.readerSettingsRepository
+    val audioPlayerManager = readerApp.audioPlayerManager
 
     val book: StateFlow<Book?> = bookRepository.getBookById(bookId).stateIn(
         scope = viewModelScope,

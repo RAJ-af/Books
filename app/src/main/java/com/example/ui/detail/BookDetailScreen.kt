@@ -73,6 +73,8 @@ import com.example.data.local.entity.Book
 import com.example.data.local.entity.Chapter
 import com.example.data.local.entity.ReadingProgress
 import com.example.ui.components.BookCoverItem
+import com.example.ui.audio.AudiobookPickerSheet
+import com.example.ui.audio.AudiobookPlayerSheet
 import com.example.ui.theme.ContentSerif
 import com.example.ui.theme.CreamBackground
 import com.example.ui.theme.EditorialSerif
@@ -91,6 +93,12 @@ fun BookDetailScreen(
     val book by viewModel.book.collectAsStateWithLifecycle()
     val chapters by viewModel.chapters.collectAsStateWithLifecycle()
     val progress by viewModel.progress.collectAsStateWithLifecycle()
+
+    val audiobooks by viewModel.audiobooks.collectAsStateWithLifecycle()
+    val isCheckingAudio by viewModel.isCheckingAudio.collectAsStateWithLifecycle()
+    val showAudioPicker by viewModel.showAudioPicker.collectAsStateWithLifecycle()
+    val playerState by viewModel.audioPlayerManager.playerState.collectAsStateWithLifecycle()
+
     var isDescriptionExpanded by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
 
@@ -320,7 +328,7 @@ fun BookDetailScreen(
                                         )
                                     )
 
-                                    if (currentBook.isImportedPdf) {
+                                    if (currentBook.isImportedPdf || currentBook.fileType == "EPUB" || currentBook.source != "local") {
                                         Text(
                                             text = "•",
                                             color = TextMuted,
@@ -328,10 +336,22 @@ fun BookDetailScreen(
                                         )
                                         Surface(
                                             shape = RoundedCornerShape(4.dp),
-                                            color = if (currentBook.source == "internet_archive") Color(0xFF2E6F40) else ObsidianBlack
+                                            color = when (currentBook.source) {
+                                                "gutenberg" -> Color(0xFFD97706)
+                                                "standard_ebooks" -> Color(0xFF059669)
+                                                "doab" -> Color(0xFF2E6F40)
+                                                "internet_archive" -> Color(0xFF285698)
+                                                else -> ObsidianBlack
+                                            }
                                         ) {
                                             Text(
-                                                text = if (currentBook.source == "internet_archive") "INTERNET ARCHIVE" else "PDF",
+                                                text = when (currentBook.source) {
+                                                    "gutenberg" -> "PROJECT GUTENBERG EPUB"
+                                                    "standard_ebooks" -> "STANDARD EBOOKS EPUB"
+                                                    "doab" -> "DOAB OPEN ACCESS"
+                                                    "internet_archive" -> "INTERNET ARCHIVE"
+                                                    else -> currentBook.fileType.uppercase()
+                                                },
                                                 color = Color.White,
                                                 fontSize = 9.sp,
                                                 fontWeight = FontWeight.Bold,
@@ -390,40 +410,55 @@ fun BookDetailScreen(
                                     }
                                 }
 
-                                // Secondary Button: "Listen" (Outline Pill / Disabled state)
+                                // Secondary Button: "Listen" (Enabled if LibriVox audiobook matches exist)
+                                val hasAudioMatch = audiobooks.isNotEmpty()
+                                val isAudioButtonEnabled = hasAudioMatch || isCheckingAudio
+
                                 OutlinedButton(
-                                    onClick = { /* Audio narration disabled */ },
-                                    enabled = false,
+                                    onClick = { viewModel.onListenButtonClicked() },
+                                    enabled = isAudioButtonEnabled,
                                     modifier = Modifier
                                         .weight(0.9f)
                                         .height(50.dp)
                                         .testTag("listen_book_button"),
                                     shape = RoundedCornerShape(percent = 50),
                                     colors = ButtonDefaults.outlinedButtonColors(
-                                        disabledContentColor = TextMuted.copy(alpha = 0.5f)
+                                        contentColor = ObsidianBlack,
+                                        disabledContentColor = TextMuted.copy(alpha = 0.4f)
                                     ),
                                     border = ButtonDefaults.outlinedButtonBorder.copy(
-                                        brush = Brush.linearGradient(listOf(TextMuted.copy(alpha = 0.3f), TextMuted.copy(alpha = 0.3f)))
+                                        brush = Brush.linearGradient(
+                                            if (isAudioButtonEnabled) listOf(ObsidianBlack, ObsidianBlack)
+                                            else listOf(TextMuted.copy(alpha = 0.3f), TextMuted.copy(alpha = 0.3f))
+                                        )
                                     )
                                 ) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.Center
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Headphones,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(16.dp),
-                                            tint = TextMuted.copy(alpha = 0.45f)
-                                        )
+                                        if (isCheckingAudio) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(16.dp),
+                                                strokeWidth = 2.dp,
+                                                color = ObsidianBlack
+                                            )
+                                        } else {
+                                            Icon(
+                                                imageVector = Icons.Default.Headphones,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp),
+                                                tint = if (isAudioButtonEnabled) ObsidianBlack else TextMuted.copy(alpha = 0.4f)
+                                            )
+                                        }
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text(
-                                            text = "Listen",
+                                            text = if (isCheckingAudio) "Checking..." else "Listen",
                                             style = MaterialTheme.typography.titleMedium.copy(
                                                 fontWeight = FontWeight.SemiBold,
                                                 fontSize = 14.sp,
                                                 fontFamily = SystemSans,
-                                                color = TextMuted.copy(alpha = 0.45f)
+                                                color = if (isAudioButtonEnabled) ObsidianBlack else TextMuted.copy(alpha = 0.4f)
                                             )
                                         )
                                     }
@@ -627,6 +662,35 @@ fun BookDetailScreen(
                     }
                 }
             }
+        }
+
+        // Audiobook Picker Bottom Sheet
+        if (showAudioPicker) {
+            AudiobookPickerSheet(
+                bookTitle = book?.title.orEmpty(),
+                audiobooks = audiobooks,
+                isLoading = isCheckingAudio,
+                onAudiobookSelected = { selectedAudiobook ->
+                    viewModel.selectAudiobookAndPlay(selectedAudiobook)
+                },
+                onDismiss = { viewModel.dismissAudioPicker() }
+            )
+        }
+
+        // Audiobook Player Bottom Sheet
+        if (playerState.isVisible) {
+            AudiobookPlayerSheet(
+                state = playerState,
+                onTogglePlayPause = { viewModel.audioPlayerManager.togglePlayPause() },
+                onSeekTo = { posMs -> viewModel.audioPlayerManager.seekTo(posMs) },
+                onSkipForward = { viewModel.audioPlayerManager.skipForward(10) },
+                onSkipBackward = { viewModel.audioPlayerManager.skipBackward(10) },
+                onNextTrack = { viewModel.audioPlayerManager.nextTrack() },
+                onPreviousTrack = { viewModel.audioPlayerManager.previousTrack() },
+                onSelectSpeed = { speed -> viewModel.audioPlayerManager.setSpeed(speed) },
+                onSelectTrack = { index -> viewModel.audioPlayerManager.playTrackAtIndex(index) },
+                onDismiss = { viewModel.audioPlayerManager.hidePlayerSheet() }
+            )
         }
     }
 }
