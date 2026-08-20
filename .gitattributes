@@ -1,0 +1,12 @@
+# Git attributes for Gradle wrapper and binary assets
+*.jar binary
+*.keystore binary
+*.png binary
+*.webp binary
+*.jpg binary
+*.jpeg binary
+*.apk binary
+*.aab binary
+
+gradlew text eol=lf
+gradlew.bat text eol=crlf

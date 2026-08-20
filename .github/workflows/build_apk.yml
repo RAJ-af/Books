@@ -45,15 +45,44 @@ jobs:
           # 2. Ensure .env file exists for Secrets Gradle Plugin
           touch .env
 
-      - name: Ensure Gradle Wrapper is Executable
+      - name: Validate and Ensure Gradle Wrapper 9.3.1
         run: |
-          if [ -f gradlew ]; then
-            chmod +x gradlew
-          else
-            echo "gradlew wrapper script not found! Regenerating with gradle wrapper..."
-            gradle wrapper --gradle-version 9.3.1
-            chmod +x gradlew
+          mkdir -p gradle/wrapper
+
+          # Verify if gradle-wrapper.jar is a valid ZIP/JAR
+          VALID_JAR=false
+          if [ -f gradle/wrapper/gradle-wrapper.jar ]; then
+            if jar tf gradle/wrapper/gradle-wrapper.jar > /dev/null 2>&1; then
+              VALID_JAR=true
+              echo "Existing gradle-wrapper.jar is valid."
+            else
+              echo "Warning: gradle-wrapper.jar is corrupt or invalid."
+            fi
           fi
+
+          # If invalid or missing, recover from base64 or download clean 9.3.1 wrapper jar
+          if [ "$VALID_JAR" = false ]; then
+            if [ -f gradle/wrapper/gradle-wrapper.jar.base64 ]; then
+              echo "Restoring gradle-wrapper.jar from base64..."
+              base64 -d gradle/wrapper/gradle-wrapper.jar.base64 > gradle/wrapper/gradle-wrapper.jar
+            fi
+
+            # Double check if base64 restored it properly
+            if ! jar tf gradle/wrapper/gradle-wrapper.jar > /dev/null 2>&1; then
+              echo "Downloading official Gradle 9.3.1 wrapper jar..."
+              curl -sSL "https://raw.githubusercontent.com/gradle/gradle/v9.3.1/gradle/wrapper/gradle-wrapper.jar" -o gradle/wrapper/gradle-wrapper.jar || true
+            fi
+          fi
+
+          # Ensure gradlew exists and is executable
+          if [ ! -f gradlew ]; then
+            echo "Regenerating wrapper scripts..."
+            gradle wrapper --gradle-version 9.3.1
+          fi
+          chmod +x gradlew
+
+          # Display Gradle version
+          ./gradlew --version
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace --no-daemon
