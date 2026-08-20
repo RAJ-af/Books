@@ -1,0 +1,6 @@
+{
+  "name": "Books",
+  "description": "A premium warm-editorial book reader and library with customizable typography, warm sepia and cream themes, and local book collections.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
