@@ -162,28 +162,38 @@ class ReaderViewModel(
 
         val chapterList = chapters.value
         val currentId = _currentChapterId.value
-        val currentChapter = chapterList.find { it.id == currentId } ?: return
+        val currentChapterIndex = chapterList.indexOfFirst { it.id == currentId }
+        if (currentChapterIndex == -1) return
+        val currentChapter = chapterList[currentChapterIndex]
 
         if (currentChapter.content.isNotBlank()) return
 
-        val pageIndex = chapterList.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
-
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val bitmap = PdfHelper.renderPageBitmap(pdfPath, pageIndex, 1200) ?: return@launch
-                val inputImage = InputImage.fromBitmap(bitmap, 0)
+                val startPage = currentChapter.pdfPageStart ?: 0
+                val endPage = chapterList.getOrNull(currentChapterIndex + 1)?.pdfPageStart ?: currentBook.pageCount
+                val contentBuilder = StringBuilder()
                 val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
-                val recognizedText = suspendCancellableCoroutine<String> { continuation ->
-                    recognizer.process(inputImage)
-                        .addOnSuccessListener { visionText -> continuation.resume(visionText.text.trim()) }
-                        .addOnFailureListener { continuation.resume("") }
+                for (p in startPage until endPage) {
+                    val bitmap = PdfHelper.renderPageBitmap(pdfPath, p, 1200) ?: continue
+                    val inputImage = InputImage.fromBitmap(bitmap, 0)
+
+                    val recognizedText = suspendCancellableCoroutine<String> { continuation ->
+                        recognizer.process(inputImage)
+                            .addOnSuccessListener { visionText -> continuation.resume(visionText.text.trim()) }
+                            .addOnFailureListener { continuation.resume("") }
+                    }
+
+                    if (recognizedText.isNotBlank()) {
+                        contentBuilder.append(recognizedText).append("\n\n")
+                    }
+                    bitmap.recycle()
                 }
 
-                bitmap.recycle()
-
-                if (recognizedText.isNotBlank()) {
-                    bookRepository.updateChapterContent(currentChapter.id, recognizedText)
+                val finalSectionText = contentBuilder.toString().trim()
+                if (finalSectionText.isNotBlank()) {
+                    bookRepository.updateChapterContent(currentChapter.id, finalSectionText)
                 }
             } catch (e: Exception) {
                 e.printStackTrace()

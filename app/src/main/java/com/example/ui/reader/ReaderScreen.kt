@@ -2,6 +2,8 @@ package com.example.ui.reader
 
 import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
@@ -11,6 +13,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,6 +46,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Info
@@ -84,6 +90,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalTextToolbar
 import androidx.compose.ui.platform.TextToolbar
 import androidx.compose.ui.platform.TextToolbarStatus
@@ -141,20 +148,48 @@ fun ReaderScreen(
     var showFormatSheet by remember { mutableStateOf(false) }
     var pdfReaderMode by rememberSaveable { mutableStateOf(PdfReaderMode.ORIGINAL) }
 
+    var pdfOriginalPageIndex by rememberSaveable(book?.id, currentChapterId) {
+        mutableStateOf(currentChapter?.pdfPageStart ?: 0)
+    }
+
+    LaunchedEffect(currentChapterId) {
+        if (pdfReaderMode == PdfReaderMode.REFLOW) {
+            pdfOriginalPageIndex = currentChapter?.pdfPageStart ?: 0
+        }
+    }
+
+    LaunchedEffect(pdfOriginalPageIndex, pdfReaderMode) {
+        if (isPdf && pdfReaderMode == PdfReaderMode.ORIGINAL) {
+            val matchingChapter = chapters.lastOrNull { (it.pdfPageStart ?: 0) <= pdfOriginalPageIndex }
+            if (matchingChapter != null && matchingChapter.id != currentChapterId) {
+                viewModel.selectChapter(matchingChapter.id)
+            }
+        }
+    }
+
     val chapterHighlights = remember(highlights, currentChapterId) {
         highlights.filter { it.chapterId == currentChapterId }
     }
 
     val firstVisibleIndex = remember { derivedStateOf { listState.firstVisibleItemIndex } }
 
-    val isCurrentPositionBookmarked = remember(bookmarks, currentChapterId, currentChapterIndex, firstVisibleIndex.value, isPdf) {
+    val isCurrentPositionBookmarked = remember(bookmarks, currentChapterId, currentChapterIndex, pdfOriginalPageIndex, pdfReaderMode, firstVisibleIndex.value, isPdf) {
         bookmarks.any { bm ->
             bm.chapterId == currentChapterId &&
-            if (isPdf) bm.pageNumber == currentChapterIndex else bm.scrollAnchor == firstVisibleIndex.value
+            if (isPdf) {
+                if (pdfReaderMode == PdfReaderMode.ORIGINAL) {
+                    bm.pageNumber == pdfOriginalPageIndex
+                } else {
+                    bm.pageNumber == currentChapterIndex
+                }
+            } else {
+                bm.scrollAnchor == firstVisibleIndex.value
+            }
         }
     }
 
     val clipboardManager = LocalClipboardManager.current
+    val context = LocalContext.current
     var selectedTextForHighlight by remember { mutableStateOf<String?>(null) }
     var showNoteDialog by remember { mutableStateOf(false) }
     var noteText by remember { mutableStateOf("") }
@@ -179,18 +214,12 @@ fun ReaderScreen(
                 onCutRequested: (() -> Unit)?,
                 onSelectAllRequested: (() -> Unit)?
             ) {
-                val wrappedCopy = onCopyRequested?.let { originalCopy ->
-                    {
-                        originalCopy.invoke()
-                        val text = clipboardManager.getText()?.text?.toString()?.trim()
-                        if (!text.isNullOrBlank()) {
-                            selectedTextForHighlight = text
-                        }
-                    }
+                // Silently invoke onCopyRequested to place selection on clipboard without showing native Android popup
+                onCopyRequested?.invoke()
+                val text = clipboardManager.getText()?.text?.toString()?.trim()
+                if (!text.isNullOrBlank()) {
+                    selectedTextForHighlight = text
                 }
-                try {
-                    defaultTextToolbar.showMenu(rect, wrappedCopy ?: onCopyRequested, onPasteRequested, onCutRequested, onSelectAllRequested)
-                } catch (_: Throwable) {}
             }
         }
     }
@@ -249,15 +278,28 @@ fun ReaderScreen(
 
     // Horizontal swipe gesture detection on page content
     var totalDragX by remember { mutableFloatStateOf(0f) }
-    val pageSwipeModifier = Modifier.pointerInput(currentChapterIndex, chapters.size) {
+    val pageSwipeModifier = Modifier.pointerInput(currentChapterIndex, chapters.size, pdfOriginalPageIndex, pdfReaderMode) {
         detectHorizontalDragGestures(
             onDragStart = { totalDragX = 0f },
             onDragEnd = {
                 val swipeThreshold = 75f
                 if (totalDragX < -swipeThreshold) {
-                    viewModel.navigateToNextChapter()
+                    if (isPdf && pdfReaderMode == PdfReaderMode.ORIGINAL) {
+                        val totalPages = book?.pageCount ?: 1
+                        if (pdfOriginalPageIndex < totalPages - 1) {
+                            pdfOriginalPageIndex++
+                        }
+                    } else {
+                        viewModel.navigateToNextChapter()
+                    }
                 } else if (totalDragX > swipeThreshold) {
-                    viewModel.navigateToPreviousChapter()
+                    if (isPdf && pdfReaderMode == PdfReaderMode.ORIGINAL) {
+                        if (pdfOriginalPageIndex > 0) {
+                            pdfOriginalPageIndex--
+                        }
+                    } else {
+                        viewModel.navigateToPreviousChapter()
+                    }
                 }
                 totalDragX = 0f
             },
@@ -278,14 +320,16 @@ fun ReaderScreen(
         // Main reading content (PDF Original Page OR Typography LazyColumn for Text/Reflow)
         if (isPdf && pdfReaderMode == PdfReaderMode.ORIGINAL) {
             val pdfPath = book?.pdfFilePath.orEmpty()
-            PdfPageView(
-                pdfPath = pdfPath,
-                pageIndex = currentChapterIndex,
-                textColor = textColor,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .then(pageSwipeModifier)
-            )
+            Crossfade(targetState = currentChapterIndex, animationSpec = tween(350)) { targetPageIndex ->
+                PdfPageView(
+                    pdfPath = pdfPath,
+                    pageIndex = targetPageIndex,
+                    textColor = textColor,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .then(pageSwipeModifier)
+                )
+            }
         } else {
             if (currentChapter == null) {
                 Box(
@@ -508,7 +552,7 @@ fun ReaderScreen(
 
         // TOP BAR
         ReaderHeaderTopBar(
-            chapterNumber = currentChapter?.number ?: (currentChapterIndex + 1),
+            chapterNumber = if (isPdf && pdfReaderMode == PdfReaderMode.ORIGINAL) (pdfOriginalPageIndex + 1) else (currentChapter?.number ?: (currentChapterIndex + 1)),
             chapterSubtitle = if (isPdf) (book?.title ?: "PDF Document") else (currentChapter?.subtitle?.takeIf { it.isNotBlank() } ?: (book?.title ?: "Feedback")),
             isPdf = isPdf,
             isScanned = isScanned,
@@ -521,7 +565,7 @@ fun ReaderScreen(
             onFormatClick = { showFormatSheet = true },
             onBookmarkClick = {
                 viewModel.toggleBookmark(
-                    pageNumber = currentChapterIndex,
+                    pageNumber = if (isPdf && pdfReaderMode == PdfReaderMode.ORIGINAL) pdfOriginalPageIndex else currentChapterIndex,
                     paragraphIndex = firstVisibleIndex.value
                 )
             },
@@ -533,16 +577,29 @@ fun ReaderScreen(
 
         // BOTTOM FLOATING PILL BAR
         ReaderFloatingBottomBar(
-            currentChapterNumber = currentChapterIndex + 1,
-            totalChapters = totalChapters,
+            currentChapterNumber = if (isPdf && pdfReaderMode == PdfReaderMode.ORIGINAL) (pdfOriginalPageIndex + 1) else (currentChapterIndex + 1),
+            totalChapters = if (isPdf && pdfReaderMode == PdfReaderMode.ORIGINAL) (book?.pageCount ?: 1) else totalChapters,
             isPdf = isPdf,
-            hasPrevious = currentChapterIndex > 0,
-            hasNext = currentChapterIndex < chapters.size - 1,
+            hasPrevious = if (isPdf && pdfReaderMode == PdfReaderMode.ORIGINAL) (pdfOriginalPageIndex > 0) else (currentChapterIndex > 0),
+            hasNext = if (isPdf && pdfReaderMode == PdfReaderMode.ORIGINAL) (pdfOriginalPageIndex < (book?.pageCount ?: 1) - 1) else (currentChapterIndex < chapters.size - 1),
             textColor = textColor,
             containerColor = pillBgColor,
             borderColor = bottomBarBorderColor,
-            onPreviousClick = { viewModel.navigateToPreviousChapter() },
-            onNextClick = { viewModel.navigateToNextChapter() },
+            onPreviousClick = {
+                if (isPdf && pdfReaderMode == PdfReaderMode.ORIGINAL) {
+                    if (pdfOriginalPageIndex > 0) pdfOriginalPageIndex--
+                } else {
+                    viewModel.navigateToPreviousChapter()
+                }
+            },
+            onNextClick = {
+                if (isPdf && pdfReaderMode == PdfReaderMode.ORIGINAL) {
+                    val totalPages = book?.pageCount ?: 1
+                    if (pdfOriginalPageIndex < totalPages - 1) pdfOriginalPageIndex++
+                } else {
+                    viewModel.navigateToNextChapter()
+                }
+            },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
@@ -663,6 +720,38 @@ fun ReaderScreen(
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
                                     text = "Note",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        color = Color.White,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                )
+                            }
+                        }
+
+                        // Copy Button
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.White.copy(alpha = 0.15f))
+                                .clickable {
+                                    clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(selText))
+                                    android.widget.Toast.makeText(context, "Copied to clipboard!", android.widget.Toast.LENGTH_SHORT).show()
+                                    selectedTextForHighlight = null
+                                }
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                                .testTag("copy_text_button"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.ContentCopy,
+                                    contentDescription = "Copy Text",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Copy",
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         color = Color.White,
                                         fontWeight = FontWeight.SemiBold
@@ -798,6 +887,10 @@ fun PdfPageView(
     var pageBitmap by remember(pdfPath, pageIndex) { mutableStateOf<Bitmap?>(null) }
     var isLoading by remember(pdfPath, pageIndex) { mutableStateOf(true) }
 
+    var scale by remember(pdfPath, pageIndex) { mutableFloatStateOf(1f) }
+    var offsetX by remember(pdfPath, pageIndex) { mutableFloatStateOf(0f) }
+    var offsetY by remember(pdfPath, pageIndex) { mutableFloatStateOf(0f) }
+
     LaunchedEffect(pdfPath, pageIndex) {
         isLoading = true
         pageBitmap = PdfHelper.renderPageBitmap(pdfPath, pageIndex, targetWidth = 1080)
@@ -807,13 +900,44 @@ fun PdfPageView(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .padding(top = 135.dp, bottom = 120.dp, start = 16.dp, end = 16.dp),
+            .padding(top = 135.dp, bottom = 120.dp, start = 16.dp, end = 16.dp)
+            .pointerInput(pdfPath, pageIndex) {
+                detectTransformGestures { _, pan, zoom, _ ->
+                    scale = (scale * zoom).coerceIn(1f, 5f)
+                    if (scale > 1f) {
+                        offsetX += pan.x * scale
+                        offsetY += pan.y * scale
+
+                        val maxOffsetX = (scale - 1f) * size.width / 2f
+                        val maxOffsetY = (scale - 1f) * size.height / 2f
+                        offsetX = offsetX.coerceIn(-maxOffsetX, maxOffsetX)
+                        offsetY = offsetY.coerceIn(-maxOffsetY, maxOffsetY)
+                    } else {
+                        offsetX = 0f
+                        offsetY = 0f
+                    }
+                }
+            }
+            .pointerInput(pdfPath, pageIndex) {
+                detectTapGestures(
+                    onDoubleTap = {
+                        if (scale > 1f) {
+                            scale = 1f
+                            offsetX = 0f
+                            offsetY = 0f
+                        } else {
+                            scale = 2.5f
+                        }
+                    }
+                )
+            },
         contentAlignment = Alignment.TopCenter
     ) {
         if (isLoading) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
+                verticalArrangement = Arrangement.Center,
+                modifier = Modifier.align(Alignment.Center)
             ) {
                 CircularProgressIndicator(
                     color = textColor,
@@ -832,7 +956,12 @@ fun PdfPageView(
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
+                    .graphicsLayer(
+                        scaleX = scale,
+                        scaleY = scale,
+                        translationX = offsetX,
+                        translationY = offsetY
+                    )
                     .shadow(10.dp, RoundedCornerShape(10.dp), spotColor = Color.Black.copy(alpha = 0.22f)),
                 shape = RoundedCornerShape(10.dp),
                 color = Color.White

@@ -8,6 +8,7 @@ import com.example.data.local.entity.Book
 import com.example.data.local.entity.Chapter
 import com.example.data.local.entity.ReadingProgress
 import com.example.data.repository.BookWithDetails
+import com.example.util.PdfHelper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -221,16 +222,17 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 colorHex = colorHex
             )
 
-            // Generate one chapter per PDF page so navigation/progress maps 1:1
-            val chapters = (1..book.pageCount).map { pageNum ->
-                val text = pageTexts.getOrNull(pageNum - 1) ?: ""
+            // Generate grouped chapters/sections instead of raw pages
+            val parsedChapters = PdfHelper.parsePdfToChapters(pageTexts, pageCount)
+            val chapters = parsedChapters.map { parsed ->
                 Chapter(
                     bookId = 0L,
-                    number = pageNum,
-                    title = "Page $pageNum",
-                    subtitle = if (pageNum == 1) "Cover & Start" else "Section $pageNum",
-                    estimatedReadMinutes = 2,
-                    content = text
+                    number = parsed.number,
+                    title = parsed.title,
+                    subtitle = parsed.subtitle,
+                    estimatedReadMinutes = (parsed.content.length / 1000).coerceAtLeast(2),
+                    content = parsed.content,
+                    pdfPageStart = parsed.startPage
                 )
             }
 

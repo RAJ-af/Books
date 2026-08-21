@@ -133,4 +133,18 @@ class BookDetailViewModel(
             )
         }
     }
+
+    fun updateBookDetails(title: String, author: String, genre: String, description: String) {
+        val currentBook = book.value ?: return
+        viewModelScope.launch {
+            repository.updateBook(
+                currentBook.copy(
+                    title = title,
+                    author = author,
+                    genre = genre,
+                    description = description
+                )
+            )
+        }
+    }
 }

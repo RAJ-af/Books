@@ -37,6 +37,14 @@ class PdfOcrWorker(
         try {
             val db = AppDatabase.getDatabase(applicationContext, CoroutineScope(Dispatchers.IO))
             val chapterDao = db.chapterDao()
+            val bookDao = db.bookDao()
+
+            val book = bookDao.getBookByIdDirect(bookId)
+            if (book == null) {
+                Log.w(TAG, "Book not found for bookId=$bookId")
+                return@withContext Result.failure()
+            }
+
             val chapters = chapterDao.getChaptersForBookDirect(bookId)
 
             if (chapters.isEmpty()) {
@@ -45,7 +53,7 @@ class PdfOcrWorker(
             }
 
             val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-            val totalPages = chapters.size
+            val totalChaptersCount = chapters.size
 
             for ((index, chapter) in chapters.withIndex()) {
                 if (isStopped) {
@@ -55,30 +63,40 @@ class PdfOcrWorker(
 
                 // Skip if page already has text saved
                 if (chapter.content.isNotBlank()) {
-                    setProgress(workDataOf(KEY_PROGRESS to index + 1, KEY_TOTAL to totalPages, KEY_BOOK_ID to bookId))
+                    setProgress(workDataOf(KEY_PROGRESS to index + 1, KEY_TOTAL to totalChaptersCount, KEY_BOOK_ID to bookId))
                     continue
                 }
 
-                val pageIndex = index
-                val bitmap = PdfHelper.renderPageBitmap(pdfPath, pageIndex, targetWidth = 1200)
+                val startPage = chapter.pdfPageStart ?: 0
+                val endPage = chapters.getOrNull(index + 1)?.pdfPageStart ?: book.pageCount
+                val contentBuilder = StringBuilder()
 
-                if (bitmap != null) {
-                    try {
-                        val inputImage = InputImage.fromBitmap(bitmap, 0)
-                        val text = recognizeText(recognizer, inputImage)
+                for (p in startPage until endPage) {
+                    val bitmap = PdfHelper.renderPageBitmap(pdfPath, p, targetWidth = 1200)
 
-                        if (text.isNotBlank()) {
-                            chapterDao.updateChapterContent(chapter.id, text)
-                            Log.d(TAG, "OCR completed for bookId=$bookId page $pageIndex (${text.length} chars)")
+                    if (bitmap != null) {
+                        try {
+                            val inputImage = InputImage.fromBitmap(bitmap, 0)
+                            val text = recognizeText(recognizer, inputImage)
+
+                            if (text.isNotBlank()) {
+                                contentBuilder.append(text).append("\n\n")
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error performing OCR on page $p: ${e.message}")
+                        } finally {
+                            bitmap.recycle()
                         }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error performing OCR on page $pageIndex: ${e.message}")
-                    } finally {
-                        bitmap.recycle()
                     }
                 }
 
-                setProgress(workDataOf(KEY_PROGRESS to index + 1, KEY_TOTAL to totalPages, KEY_BOOK_ID to bookId))
+                val sectionText = contentBuilder.toString().trim()
+                if (sectionText.isNotBlank()) {
+                    chapterDao.updateChapterContent(chapter.id, sectionText)
+                    Log.d(TAG, "OCR completed for bookId=$bookId chapter ${chapter.number} (pages $startPage to $endPage, ${sectionText.length} chars)")
+                }
+
+                setProgress(workDataOf(KEY_PROGRESS to index + 1, KEY_TOTAL to totalChaptersCount, KEY_BOOK_ID to bookId))
             }
 
             Log.d(TAG, "OCR worker completed successfully for bookId=$bookId")

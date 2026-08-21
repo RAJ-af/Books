@@ -174,4 +174,8 @@ class BookRepository(
             Log.e("BookRepository", "Error in checkAndVerifyPdfBooks: ${e.message}")
         }
     }
+
+    suspend fun updateBook(book: Book) {
+        bookDao.updateBook(book)
+    }
 }

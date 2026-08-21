@@ -31,6 +31,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -103,6 +104,7 @@ fun BookDetailScreen(
 
     var isDescriptionExpanded by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
+    var showEditDetailsDialog by remember { mutableStateOf(false) }
 
     val baseColor = remember(book?.colorHex) {
         try {
@@ -133,41 +135,119 @@ fun BookDetailScreen(
                     )
                 )
         ) {
-            // Blurred decorative atmospheric circles matching book color
-            Box(
-                modifier = Modifier
-                    .size(240.dp)
-                    .align(Alignment.TopCenter)
-                    .blur(50.dp)
-                    .background(baseColor.copy(alpha = 0.25f), CircleShape)
+        // Blurred decorative atmospheric circles matching book color
+        Box(
+            modifier = Modifier
+                .size(240.dp)
+                .align(Alignment.TopCenter)
+                .blur(50.dp)
+                .background(baseColor.copy(alpha = 0.25f), CircleShape)
+        )
+    }
+
+    if (showEditDetailsDialog && book != null) {
+        val currentBook = book!!
+        var editTitle by remember { mutableStateOf(currentBook.title) }
+        var editAuthor by remember { mutableStateOf(currentBook.author) }
+        var editGenre by remember { mutableStateOf(currentBook.genre) }
+        var editDesc by remember { mutableStateOf(currentBook.description) }
+
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showEditDetailsDialog = false },
+            containerColor = WarmOffWhite,
+            title = {
+                Text(
+                    text = "Edit Book Details",
+                    fontFamily = EditorialSerif,
+                    fontWeight = FontWeight.Bold,
+                    color = ObsidianBlack
+                )
+            },
+            text = {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    androidx.compose.material3.OutlinedTextField(
+                        value = editTitle,
+                        onValueChange = { editTitle = it },
+                        label = { Text("Title") },
+                        modifier = Modifier.fillMaxWidth().testTag("edit_title_input")
+                    )
+                    androidx.compose.material3.OutlinedTextField(
+                        value = editAuthor,
+                        onValueChange = { editAuthor = it },
+                        label = { Text("Author") },
+                        modifier = Modifier.fillMaxWidth().testTag("edit_author_input")
+                    )
+                    androidx.compose.material3.OutlinedTextField(
+                        value = editGenre,
+                        onValueChange = { editGenre = it },
+                        label = { Text("Genre") },
+                        modifier = Modifier.fillMaxWidth().testTag("edit_genre_input")
+                    )
+                    androidx.compose.material3.OutlinedTextField(
+                        value = editDesc,
+                        onValueChange = { editDesc = it },
+                        label = { Text("Description") },
+                        modifier = Modifier.fillMaxWidth().testTag("edit_desc_input"),
+                        maxLines = 4
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.updateBookDetails(
+                            title = editTitle.trim(),
+                            author = editAuthor.trim(),
+                            genre = editGenre.trim(),
+                            description = editDesc.trim()
+                        )
+                        showEditDetailsDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ObsidianBlack),
+                    modifier = Modifier.testTag("save_book_details_button")
+                ) {
+                    Text("Save", color = Color.White)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { showEditDetailsDialog = false }
+                ) {
+                    Text("Cancel", color = ObsidianBlack)
+                }
+            }
+        )
+    }
+
+    Scaffold(
+        containerColor = Color.Transparent,
+        topBar = {
+            BookDetailTopBar(
+                onBackClick = onBackClick,
+                showMenu = showMoreMenu,
+                onToggleMenu = { showMoreMenu = it },
+                onBookmarksClick = { book?.id?.let { onBookmarksClick(it) } },
+                onMarkFinished = {
+                    val lastChapter = chapters.lastOrNull()
+                    if (lastChapter != null) {
+                        viewModel.markChapterProgress(lastChapter.id, 100f)
+                    }
+                    showMoreMenu = false
+                },
+                onResetProgress = {
+                    val firstChapter = chapters.firstOrNull()
+                    if (firstChapter != null) {
+                        viewModel.markChapterProgress(firstChapter.id, 0f)
+                    }
+                    showMoreMenu = false
+                },
+                onEditDetailsClick = { showEditDetailsDialog = true }
             )
         }
-
-        Scaffold(
-            containerColor = Color.Transparent,
-            topBar = {
-                BookDetailTopBar(
-                    onBackClick = onBackClick,
-                    showMenu = showMoreMenu,
-                    onToggleMenu = { showMoreMenu = it },
-                    onBookmarksClick = { book?.id?.let { onBookmarksClick(it) } },
-                    onMarkFinished = {
-                        val lastChapter = chapters.lastOrNull()
-                        if (lastChapter != null) {
-                            viewModel.markChapterProgress(lastChapter.id, 100f)
-                        }
-                        showMoreMenu = false
-                    },
-                    onResetProgress = {
-                        val firstChapter = chapters.firstOrNull()
-                        if (firstChapter != null) {
-                            viewModel.markChapterProgress(firstChapter.id, 0f)
-                        }
-                        showMoreMenu = false
-                    }
-                )
-            }
-        ) { innerPadding ->
+    ) { innerPadding ->
             if (book == null) {
                 Box(
                     modifier = Modifier
@@ -705,7 +785,8 @@ fun BookDetailTopBar(
     onToggleMenu: (Boolean) -> Unit,
     onBookmarksClick: () -> Unit,
     onMarkFinished: () -> Unit,
-    onResetProgress: () -> Unit
+    onResetProgress: () -> Unit,
+    onEditDetailsClick: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -797,6 +878,26 @@ fun BookDetailTopBar(
                         )
                     },
                     onClick = onResetProgress
+                )
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            "Edit Details",
+                            fontFamily = SystemSans,
+                            fontWeight = FontWeight.Medium
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = null,
+                            tint = ObsidianBlack
+                        )
+                    },
+                    onClick = {
+                        onToggleMenu(false)
+                        onEditDetailsClick()
+                    }
                 )
             }
         }
