@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -133,7 +134,8 @@ fun ReaderScreen(
     val currentChapter = chapters.find { it.id == currentChapterId } ?: chapters.firstOrNull()
     val currentChapterIndex = chapters.indexOfFirst { it.id == currentChapter?.id }.let { if (it == -1) 0 else it }
     val totalChapters = chapters.size.coerceAtLeast(1)
-    val isPdf = book?.isImportedPdf == true
+    val isPdf = book?.isImportedPdf == true || book?.fileType == "PDF" || (book?.pdfFilePath?.isNotBlank() == true)
+    val isScanned = book?.isScanned == true
 
     val listState = rememberLazyListState()
     var showFormatSheet by remember { mutableStateOf(false) }
@@ -245,32 +247,32 @@ fun ReaderScreen(
         listState.scrollToItem(0)
     }
 
-    // Horizontal swipe gesture detection
+    // Horizontal swipe gesture detection on page content
     var totalDragX by remember { mutableFloatStateOf(0f) }
+    val pageSwipeModifier = Modifier.pointerInput(currentChapterIndex, chapters.size) {
+        detectHorizontalDragGestures(
+            onDragStart = { totalDragX = 0f },
+            onDragEnd = {
+                val swipeThreshold = 75f
+                if (totalDragX < -swipeThreshold) {
+                    viewModel.navigateToNextChapter()
+                } else if (totalDragX > swipeThreshold) {
+                    viewModel.navigateToPreviousChapter()
+                }
+                totalDragX = 0f
+            },
+            onDragCancel = { totalDragX = 0f },
+            onHorizontalDrag = { change, dragAmount ->
+                change.consume()
+                totalDragX += dragAmount
+            }
+        )
+    }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(backgroundColor)
-            .pointerInput(currentChapterIndex, chapters.size) {
-                detectHorizontalDragGestures(
-                    onDragStart = { totalDragX = 0f },
-                    onDragEnd = {
-                        val swipeThreshold = 75f
-                        if (totalDragX < -swipeThreshold) {
-                            viewModel.navigateToNextChapter()
-                        } else if (totalDragX > swipeThreshold) {
-                            viewModel.navigateToPreviousChapter()
-                        }
-                        totalDragX = 0f
-                    },
-                    onDragCancel = { totalDragX = 0f },
-                    onHorizontalDrag = { change, dragAmount ->
-                        change.consume()
-                        totalDragX += dragAmount
-                    }
-                )
-            }
             .testTag("reader_screen_container")
     ) {
         // Main reading content (PDF Original Page OR Typography LazyColumn for Text/Reflow)
@@ -280,7 +282,9 @@ fun ReaderScreen(
                 pdfPath = pdfPath,
                 pageIndex = currentChapterIndex,
                 textColor = textColor,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier
+                    .fillMaxSize()
+                    .then(pageSwipeModifier)
             )
         } else {
             if (currentChapter == null) {
@@ -310,11 +314,12 @@ fun ReaderScreen(
                             state = listState,
                             modifier = Modifier
                                 .fillMaxSize()
+                                .then(pageSwipeModifier)
                                 .testTag("reader_content_scroll"),
                             contentPadding = PaddingValues(
                                 start = 26.dp,
                                 end = 26.dp,
-                                top = 100.dp,   // Space below top bar
+                                top = 135.dp,   // Space below top bar & status badge
                                 bottom = 150.dp // Generous space so floating bottom bar never obstructs text
                             ),
                             verticalArrangement = Arrangement.spacedBy(22.dp)
@@ -489,7 +494,7 @@ fun ReaderScreen(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(110.dp)
+                .height(135.dp)
                 .background(
                     Brush.verticalGradient(
                         listOf(
@@ -506,6 +511,7 @@ fun ReaderScreen(
             chapterNumber = currentChapter?.number ?: (currentChapterIndex + 1),
             chapterSubtitle = if (isPdf) (book?.title ?: "PDF Document") else (currentChapter?.subtitle?.takeIf { it.isNotBlank() } ?: (book?.title ?: "Feedback")),
             isPdf = isPdf,
+            isScanned = isScanned,
             pdfReaderMode = pdfReaderMode,
             onPdfReaderModeChange = { pdfReaderMode = it },
             hasAudioPlayer = playerState.tracks.isNotEmpty(),
@@ -801,8 +807,8 @@ fun PdfPageView(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .padding(top = 90.dp, bottom = 120.dp, start = 16.dp, end = 16.dp),
-        contentAlignment = Alignment.Center
+            .padding(top = 135.dp, bottom = 120.dp, start = 16.dp, end = 16.dp),
+        contentAlignment = Alignment.TopCenter
     ) {
         if (isLoading) {
             Column(
@@ -872,6 +878,7 @@ fun ReaderHeaderTopBar(
     chapterNumber: Int,
     chapterSubtitle: String,
     isPdf: Boolean = false,
+    isScanned: Boolean = false,
     pdfReaderMode: PdfReaderMode = PdfReaderMode.ORIGINAL,
     onPdfReaderModeChange: (PdfReaderMode) -> Unit = {},
     hasAudioPlayer: Boolean = false,
@@ -886,7 +893,7 @@ fun ReaderHeaderTopBar(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -909,19 +916,19 @@ fun ReaderHeaderTopBar(
             )
         }
 
-        // Center: Chapter/Page title and subtitle or Mode Switcher
+        // Center: Chapter/Page title, Status Badge, and Mode Switcher
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
                 .weight(1f)
-                .padding(horizontal = 8.dp)
+                .padding(horizontal = 6.dp)
         ) {
             Text(
                 text = if (isPdf) "Page $chapterNumber" else "Chapter $chapterNumber",
                 style = MaterialTheme.typography.titleMedium.copy(
                     fontFamily = EditorialSerif,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
+                    fontSize = 15.sp,
                     color = textColor
                 ),
                 maxLines = 1,
@@ -929,12 +936,42 @@ fun ReaderHeaderTopBar(
             )
 
             if (isPdf) {
+                Spacer(modifier = Modifier.height(2.dp))
+
+                // Clear Status Badge Chip
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (isScanned) Color(0xFFD97706).copy(alpha = 0.15f) else Color(0xFF3B82F6).copy(alpha = 0.15f),
+                    border = BorderStroke(1.dp, if (isScanned) Color(0xFFD97706).copy(alpha = 0.4f) else Color(0xFF3B82F6).copy(alpha = 0.4f))
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(5.dp)
+                                .clip(CircleShape)
+                                .background(if (isScanned) Color(0xFFD97706) else Color(0xFF3B82F6))
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (isScanned) "Scanned • Reflow Available" else "Digital PDF",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = SystemSans,
+                            color = if (isScanned) Color(0xFFD97706) else Color(0xFF3B82F6)
+                        )
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(4.dp))
+
                 // Mode Switcher Pill [ Original | Reflow ]
                 Surface(
                     shape = RoundedCornerShape(16.dp),
                     color = Color(0xFF22201E),
-                    modifier = Modifier.height(28.dp)
+                    modifier = Modifier.height(26.dp)
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -944,12 +981,12 @@ fun ReaderHeaderTopBar(
                             onClick = { onPdfReaderModeChange(PdfReaderMode.ORIGINAL) },
                             shape = RoundedCornerShape(14.dp),
                             color = if (pdfReaderMode == PdfReaderMode.ORIGINAL) Color(0xFFD97706) else Color.Transparent,
-                            modifier = Modifier.height(24.dp)
+                            modifier = Modifier.height(22.dp)
                         ) {
-                            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 10.dp)) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 8.dp)) {
                                 Text(
                                     text = "Original",
-                                    fontSize = 11.sp,
+                                    fontSize = 10.5.sp,
                                     fontWeight = FontWeight.Bold,
                                     fontFamily = SystemSans,
                                     color = Color.White
@@ -961,12 +998,12 @@ fun ReaderHeaderTopBar(
                             onClick = { onPdfReaderModeChange(PdfReaderMode.REFLOW) },
                             shape = RoundedCornerShape(14.dp),
                             color = if (pdfReaderMode == PdfReaderMode.REFLOW) Color(0xFFD97706) else Color.Transparent,
-                            modifier = Modifier.height(24.dp)
+                            modifier = Modifier.height(22.dp)
                         ) {
-                            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 10.dp)) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 8.dp)) {
                                 Text(
                                     text = "Reflow",
-                                    fontSize = 11.sp,
+                                    fontSize = 10.5.sp,
                                     fontWeight = FontWeight.Bold,
                                     fontFamily = SystemSans,
                                     color = Color.White

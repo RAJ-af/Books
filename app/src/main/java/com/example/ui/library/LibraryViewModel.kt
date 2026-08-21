@@ -30,6 +30,12 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
 
     private val repository = (application as ReaderApplication).bookRepository
 
+    init {
+        viewModelScope.launch {
+            repository.checkAndVerifyPdfBooks(getApplication())
+        }
+    }
+
     val allBooks = repository.allBooks.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),

@@ -1,5 +1,7 @@
 package com.example.data.repository
 
+import android.content.Context
+import android.util.Log
 import com.example.data.local.dao.BookDao
 import com.example.data.local.dao.BookmarkDao
 import com.example.data.local.dao.ChapterDao
@@ -10,8 +12,13 @@ import com.example.data.local.entity.Bookmark
 import com.example.data.local.entity.Chapter
 import com.example.data.local.entity.Highlight
 import com.example.data.local.entity.ReadingProgress
+import com.example.util.OcrManager
+import com.example.util.PdfHelper
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.withContext
+import java.io.File
 
 data class BookWithDetails(
     val book: Book,
@@ -129,5 +136,42 @@ class BookRepository(
         readingProgressDao.deleteProgress(book.id)
         chapterDao.deleteChaptersForBook(book.id)
         bookDao.deleteBook(book)
+    }
+
+    suspend fun checkAndVerifyPdfBooks(context: Context) = withContext(Dispatchers.IO) {
+        try {
+            val pdfBooks = bookDao.getImportedPdfBooksDirect()
+            for (book in pdfBooks) {
+                if (book.pdfFilePath.isBlank()) continue
+                val pdfFile = File(book.pdfFilePath)
+                if (!pdfFile.exists()) continue
+
+                val chapters = chapterDao.getChaptersForBookDirect(book.id)
+                val hasEmptyChapters = chapters.isEmpty() || chapters.any { it.content.isBlank() }
+
+                if (hasEmptyChapters || !book.isScanned) {
+                    val (isScanned, pageTexts) = PdfHelper.extractTextAndCheckScanned(context, pdfFile)
+
+                    if (book.isScanned != isScanned) {
+                        bookDao.updateBook(book.copy(isScanned = isScanned))
+                    }
+
+                    if (pageTexts.isNotEmpty() && chapters.isNotEmpty()) {
+                        for (chapter in chapters) {
+                            val pageText = pageTexts.getOrNull(chapter.number - 1) ?: ""
+                            if (pageText.isNotBlank() && chapter.content.isBlank()) {
+                                chapterDao.updateChapterContent(chapter.id, pageText)
+                            }
+                        }
+                    }
+
+                    if (isScanned) {
+                        OcrManager.enqueueOcrJob(context, book.id, book.pdfFilePath)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("BookRepository", "Error in checkAndVerifyPdfBooks: ${e.message}")
+        }
     }
 }

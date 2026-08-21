@@ -29,6 +29,9 @@ interface BookDao {
     @Query("SELECT * FROM books WHERE title LIKE '%' || :query || '%' OR author LIKE '%' || :query || '%' ORDER BY title ASC")
     fun searchBooks(query: String): Flow<List<Book>>
 
+    @Query("SELECT * FROM books WHERE isImportedPdf = 1 OR fileType = 'PDF' OR pdfFilePath != ''")
+    suspend fun getImportedPdfBooksDirect(): List<Book>
+
     @Query("SELECT COUNT(*) FROM books")
     suspend fun getBookCount(): Int
 

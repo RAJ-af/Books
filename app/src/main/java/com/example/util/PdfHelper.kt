@@ -184,7 +184,7 @@ object PdfHelper {
         }
     }
 
-    private fun extractTextAndCheckScanned(context: Context, pdfFile: File): Pair<Boolean, List<String>> {
+    fun extractTextAndCheckScanned(context: Context, pdfFile: File): Pair<Boolean, List<String>> {
         return try {
             PDFBoxResourceLoader.init(context)
             val doc = PDDocument.load(pdfFile)
