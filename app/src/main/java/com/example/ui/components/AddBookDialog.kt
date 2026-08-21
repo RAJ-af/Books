@@ -85,7 +85,7 @@ fun AddBookBottomSheet(
     onDismiss: () -> Unit,
     onBrowseInternetArchive: () -> Unit,
     onAddManualBook: (title: String, author: String, genre: String, description: String, colorHex: String) -> Unit,
-    onAddPdfBook: (title: String, author: String, genre: String, description: String, pdfPath: String, coverPath: String, pageCount: Int, colorHex: String) -> Unit
+    onAddPdfBook: (title: String, author: String, genre: String, description: String, pdfPath: String, coverPath: String, pageCount: Int, colorHex: String, isScanned: Boolean, pageTexts: List<String>) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -403,10 +403,10 @@ fun AddBookBottomSheet(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Surface(
                                     shape = RoundedCornerShape(4.dp),
-                                    color = Color(0xFFB82C1B)
+                                    color = if (pdf.isScanned) Color(0xFFC86C20) else Color(0xFFB82C1B)
                                 ) {
                                     Text(
-                                        text = "PDF READY",
+                                        text = if (pdf.isScanned) "SCANNED PDF" else "PDF READY",
                                         color = Color.White,
                                         fontSize = 9.sp,
                                         fontWeight = FontWeight.Black,
@@ -684,7 +684,9 @@ fun AddBookBottomSheet(
                                 pdf.pdfPath,
                                 pdf.coverImagePath,
                                 pdf.pageCount,
-                                selectedColor
+                                selectedColor,
+                                pdf.isScanned,
+                                pdf.pageTexts
                             )
                         } else {
                             onAddManualBook(

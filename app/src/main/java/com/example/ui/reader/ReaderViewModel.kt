@@ -5,18 +5,27 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.ReaderApplication
 import com.example.data.local.entity.Book
+import com.example.data.local.entity.Bookmark
 import com.example.data.local.entity.Chapter
+import com.example.data.local.entity.Highlight
 import com.example.data.local.entity.ReadingProgress
 import com.example.data.settings.ReaderFontStyle
 import com.example.data.settings.ReaderLineSpacing
 import com.example.data.settings.ReaderSettings
 import com.example.data.settings.ReaderThemeMode
+import com.example.util.PdfHelper
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 
 class ReaderViewModel(
     application: Application,
@@ -56,9 +65,84 @@ class ReaderViewModel(
         initialValue = ReaderSettings()
     )
 
+    val bookmarks: StateFlow<List<Bookmark>> = bookRepository.getBookmarksForBook(bookId).stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    val highlights: StateFlow<List<Highlight>> = bookRepository.getHighlightsForBook(bookId).stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
     init {
         // Initial progress record for this chapter if opened
         selectChapter(initialChapterId)
+    }
+
+    fun toggleBookmark(pageNumber: Int, paragraphIndex: Int) {
+        val chapterId = _currentChapterId.value
+        val currentBookmarks = bookmarks.value
+        val isPdf = book.value?.isImportedPdf == true
+        val existing = currentBookmarks.find {
+            it.chapterId == chapterId &&
+            (if (isPdf) it.pageNumber == pageNumber else it.scrollAnchor == paragraphIndex)
+        }
+
+        viewModelScope.launch {
+            if (existing != null) {
+                bookRepository.deleteBookmark(existing)
+            } else {
+                val chapter = chapters.value.find { it.id == chapterId }
+                val label = if (isPdf) {
+                    "Page ${pageNumber + 1}"
+                } else {
+                    "Chapter ${chapter?.number ?: 1} • Paragraph ${paragraphIndex + 1}"
+                }
+                bookRepository.insertBookmark(
+                    Bookmark(
+                        bookId = bookId,
+                        chapterId = chapterId,
+                        pageNumber = pageNumber,
+                        scrollAnchor = paragraphIndex,
+                        label = label
+                    )
+                )
+            }
+        }
+    }
+
+    fun addHighlight(
+        paragraphIndex: Int,
+        startOffset: Int,
+        endOffset: Int,
+        highlightedText: String,
+        colorHex: String,
+        note: String? = null
+    ) {
+        val chapterId = _currentChapterId.value
+        viewModelScope.launch {
+            bookRepository.insertHighlight(
+                Highlight(
+                    bookId = bookId,
+                    chapterId = chapterId,
+                    paragraphIndex = paragraphIndex,
+                    startOffset = startOffset,
+                    endOffset = endOffset,
+                    highlightedText = highlightedText,
+                    colorHex = colorHex,
+                    note = note
+                )
+            )
+        }
+    }
+
+    fun deleteHighlight(highlightId: Long) {
+        viewModelScope.launch {
+            bookRepository.deleteHighlightById(highlightId)
+        }
     }
 
     fun selectChapter(chapterId: Long) {
@@ -68,6 +152,43 @@ class ReaderViewModel(
         val total = if (chapterList.isNotEmpty()) chapterList.size else 1
         val percent = ((currentIndex + 1).toFloat() / total.toFloat()) * 100f
         updateProgress(chapterId, percent)
+        triggerOnDemandOcrForCurrentPage()
+    }
+
+    fun triggerOnDemandOcrForCurrentPage() {
+        val currentBook = book.value ?: return
+        val pdfPath = currentBook.pdfFilePath
+        if (!currentBook.isImportedPdf || pdfPath.isBlank()) return
+
+        val chapterList = chapters.value
+        val currentId = _currentChapterId.value
+        val currentChapter = chapterList.find { it.id == currentId } ?: return
+
+        if (currentChapter.content.isNotBlank()) return
+
+        val pageIndex = chapterList.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val bitmap = PdfHelper.renderPageBitmap(pdfPath, pageIndex, 1200) ?: return@launch
+                val inputImage = InputImage.fromBitmap(bitmap, 0)
+                val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+
+                val recognizedText = suspendCancellableCoroutine<String> { continuation ->
+                    recognizer.process(inputImage)
+                        .addOnSuccessListener { visionText -> continuation.resume(visionText.text.trim()) }
+                        .addOnFailureListener { continuation.resume("") }
+                }
+
+                bitmap.recycle()
+
+                if (recognizedText.isNotBlank()) {
+                    bookRepository.updateChapterContent(currentChapter.id, recognizedText)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
 
     fun navigateToNextChapter(): Boolean {

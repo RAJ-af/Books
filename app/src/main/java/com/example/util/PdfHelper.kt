@@ -6,6 +6,10 @@ import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
+import android.util.Log
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.text.PDFTextStripper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -16,10 +20,14 @@ data class PdfImportResult(
     val coverImagePath: String,
     val pageCount: Int,
     val guessedTitle: String,
-    val fileSizeFormatted: String
+    val fileSizeFormatted: String,
+    val isScanned: Boolean = false,
+    val pageTexts: List<String> = emptyList()
 )
 
 object PdfHelper {
+
+    private const val TAG = "PdfHelper"
 
     suspend fun processAndImportPdf(context: Context, uri: Uri): Result<PdfImportResult> = withContext(Dispatchers.IO) {
         try {
@@ -93,6 +101,9 @@ object PdfHelper {
                 pfd.close()
             }
 
+            // 5. PdfBox Text Extraction & Scanned Detection (< 50 chars/page)
+            val (isScanned, pageTexts) = extractTextAndCheckScanned(context, savedPdfFile)
+
             val sizeInMb = savedPdfFile.length() / (1024f * 1024f)
             val formattedSize = if (sizeInMb >= 1f) String.format("%.1f MB", sizeInMb) else "${savedPdfFile.length() / 1024} KB"
 
@@ -102,7 +113,9 @@ object PdfHelper {
                     coverImagePath = savedCoverFile.absolutePath,
                     pageCount = pageCount,
                     guessedTitle = cleanedTitle.ifBlank { "Untitled PDF" },
-                    fileSizeFormatted = formattedSize
+                    fileSizeFormatted = formattedSize,
+                    isScanned = isScanned,
+                    pageTexts = pageTexts
                 )
             )
         } catch (e: Exception) {
@@ -149,6 +162,9 @@ object PdfHelper {
                 pfd.close()
             }
 
+            // PdfBox Text Extraction & Scanned Detection (< 50 chars/page)
+            val (isScanned, pageTexts) = extractTextAndCheckScanned(context, pdfFile)
+
             val sizeInMb = pdfFile.length() / (1024f * 1024f)
             val formattedSize = if (sizeInMb >= 1f) String.format("%.1f MB", sizeInMb) else "${pdfFile.length() / 1024} KB"
 
@@ -158,11 +174,41 @@ object PdfHelper {
                     coverImagePath = savedCoverFile.absolutePath,
                     pageCount = pageCount,
                     guessedTitle = title.ifBlank { "Internet Archive Document" },
-                    fileSizeFormatted = formattedSize
+                    fileSizeFormatted = formattedSize,
+                    isScanned = isScanned,
+                    pageTexts = pageTexts
                 )
             )
         } catch (e: Exception) {
             Result.failure(e)
+        }
+    }
+
+    private fun extractTextAndCheckScanned(context: Context, pdfFile: File): Pair<Boolean, List<String>> {
+        return try {
+            PDFBoxResourceLoader.init(context)
+            val doc = PDDocument.load(pdfFile)
+            val stripper = PDFTextStripper()
+            val pageTexts = mutableListOf<String>()
+            var totalChars = 0
+
+            val numPages = doc.numberOfPages
+            for (i in 1..numPages) {
+                stripper.startPage = i
+                stripper.endPage = i
+                val pageText = stripper.getText(doc).trim()
+                pageTexts.add(pageText)
+                totalChars += pageText.length
+            }
+            doc.close()
+
+            val avgChars = if (numPages > 0) totalChars / numPages else 0
+            val isScanned = avgChars < 50
+            Log.d(TAG, "PDFBox extracted $totalChars total chars ($avgChars/page). isScanned=$isScanned")
+            Pair(isScanned, pageTexts)
+        } catch (e: Exception) {
+            Log.w(TAG, "PDFBox text extraction failed: ${e.message}")
+            Pair(true, emptyList())
         }
     }
 

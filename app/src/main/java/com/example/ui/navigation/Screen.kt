@@ -10,7 +10,11 @@ sealed class Screen(val route: String) {
     object BookDetail : Screen("book_detail/{bookId}") {
         fun createRoute(bookId: Long) = "book_detail/$bookId"
     }
-    object Reader : Screen("reader/{bookId}/{chapterId}") {
-        fun createRoute(bookId: Long, chapterId: Long) = "reader/$bookId/$chapterId"
+    object BookmarksAndHighlights : Screen("bookmarks_highlights/{bookId}") {
+        fun createRoute(bookId: Long) = "bookmarks_highlights/$bookId"
+    }
+    object Reader : Screen("reader/{bookId}/{chapterId}?page={page}&paragraph={paragraph}") {
+        fun createRoute(bookId: Long, chapterId: Long, page: Int = 0, paragraph: Int = 0) =
+            "reader/$bookId/$chapterId?page=$page&paragraph=$paragraph"
     }
 }

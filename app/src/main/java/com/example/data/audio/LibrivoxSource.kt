@@ -54,14 +54,22 @@ class LibrivoxSource(
 
             // LibriVox exact/prefix search using ^
             val searchTitleParam = "^$cleanQuery"
-            var response = apiService.searchAudiobooks(title = searchTitleParam)
-
-            // Fallback to plain query if caret prefix yields no results
-            if (response.books.isNullOrEmpty()) {
-                response = apiService.searchAudiobooks(title = cleanQuery)
+            var response: LibrivoxAudiobooksResponse? = try {
+                apiService.searchAudiobooks(title = searchTitleParam)
+            } catch (e: retrofit2.HttpException) {
+                if (e.code() == 404) null else throw e
             }
 
-            val books = response.books ?: return@withContext emptyList()
+            // Fallback to plain query if caret prefix yields no results or 404
+            if (response == null || response.books.isNullOrEmpty()) {
+                response = try {
+                    apiService.searchAudiobooks(title = cleanQuery)
+                } catch (e: retrofit2.HttpException) {
+                    if (e.code() == 404) null else throw e
+                }
+            }
+
+            val books = response?.books ?: return@withContext emptyList()
 
             books.map { item ->
                 val authorStr = item.authors?.joinToString(", ") { a ->
@@ -82,8 +90,15 @@ class LibrivoxSource(
                     numSections = item.numSections?.toIntOrNull() ?: 1
                 )
             }
+        } catch (e: retrofit2.HttpException) {
+            if (e.code() == 404) {
+                Log.d(TAG, "No LibriVox audiobooks found for query: $query")
+            } else {
+                Log.w(TAG, "HTTP ${e.code()} searching LibriVox audiobooks for query: $query")
+            }
+            emptyList()
         } catch (e: Exception) {
-            Log.e(TAG, "Error searching LibriVox audiobooks for query: $query", e)
+            Log.w(TAG, "Error searching LibriVox audiobooks for query: $query: ${e.message}")
             emptyList()
         }
     }
@@ -93,8 +108,12 @@ class LibrivoxSource(
      */
     suspend fun fetchAudioTracks(projectId: String): List<LibrivoxAudioTrack> = withContext(Dispatchers.IO) {
         try {
-            val response = apiService.getAudioTracks(projectId = projectId)
-            val sections = response.sections ?: return@withContext emptyList()
+            val response = try {
+                apiService.getAudioTracks(projectId = projectId)
+            } catch (e: retrofit2.HttpException) {
+                if (e.code() == 404) null else throw e
+            }
+            val sections = response?.sections ?: return@withContext emptyList()
 
             sections.mapIndexed { index, sec ->
                 val trackNum = sec.sectionNumber?.toIntOrNull() ?: (index + 1)
@@ -113,8 +132,15 @@ class LibrivoxSource(
                     playtimeSecs = secs
                 )
             }.filter { it.listenUrl.isNotBlank() }
+        } catch (e: retrofit2.HttpException) {
+            if (e.code() == 404) {
+                Log.d(TAG, "No audio tracks found for project: $projectId")
+            } else {
+                Log.w(TAG, "HTTP ${e.code()} fetching audio tracks for project: $projectId")
+            }
+            emptyList()
         } catch (e: Exception) {
-            Log.e(TAG, "Error fetching audio tracks for project: $projectId", e)
+            Log.w(TAG, "Error fetching audio tracks for project: $projectId: ${e.message}")
             emptyList()
         }
     }

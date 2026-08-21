@@ -1,10 +1,14 @@
 package com.example.data.repository
 
 import com.example.data.local.dao.BookDao
+import com.example.data.local.dao.BookmarkDao
 import com.example.data.local.dao.ChapterDao
+import com.example.data.local.dao.HighlightDao
 import com.example.data.local.dao.ReadingProgressDao
 import com.example.data.local.entity.Book
+import com.example.data.local.entity.Bookmark
 import com.example.data.local.entity.Chapter
+import com.example.data.local.entity.Highlight
 import com.example.data.local.entity.ReadingProgress
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -18,7 +22,9 @@ data class BookWithDetails(
 class BookRepository(
     private val bookDao: BookDao,
     private val chapterDao: ChapterDao,
-    private val readingProgressDao: ReadingProgressDao
+    private val readingProgressDao: ReadingProgressDao,
+    private val bookmarkDao: BookmarkDao,
+    private val highlightDao: HighlightDao
 ) {
     val allBooks: Flow<List<Book>> = bookDao.getAllBooks()
     val allGenres: Flow<List<String>> = bookDao.getAllGenres()
@@ -43,6 +49,35 @@ class BookRepository(
     suspend fun getFirstChapterForBook(bookId: Long): Chapter? = chapterDao.getFirstChapterForBook(bookId)
 
     fun getProgressForBook(bookId: Long): Flow<ReadingProgress?> = readingProgressDao.getProgressForBook(bookId)
+
+    // Bookmarks
+    fun getBookmarksForBook(bookId: Long): Flow<List<Bookmark>> = bookmarkDao.getBookmarksForBook(bookId)
+
+    fun getBookmarksForChapter(bookId: Long, chapterId: Long): Flow<List<Bookmark>> =
+        bookmarkDao.getBookmarksForChapter(bookId, chapterId)
+
+    suspend fun insertBookmark(bookmark: Bookmark): Long = bookmarkDao.insertBookmark(bookmark)
+
+    suspend fun deleteBookmark(bookmark: Bookmark) = bookmarkDao.deleteBookmark(bookmark)
+
+    suspend fun deleteBookmarkById(id: Long) = bookmarkDao.deleteBookmarkById(id)
+
+    suspend fun deleteBookmarkAt(bookId: Long, chapterId: Long, pageNumber: Int, scrollAnchor: Int) =
+        bookmarkDao.deleteBookmarkAt(bookId, chapterId, pageNumber, scrollAnchor)
+
+    // Highlights
+    fun getHighlightsForBook(bookId: Long): Flow<List<Highlight>> = highlightDao.getHighlightsForBook(bookId)
+
+    fun getHighlightsForChapter(bookId: Long, chapterId: Long): Flow<List<Highlight>> =
+        highlightDao.getHighlightsForChapter(bookId, chapterId)
+
+    suspend fun insertHighlight(highlight: Highlight): Long = highlightDao.insertHighlight(highlight)
+
+    suspend fun updateHighlight(highlight: Highlight) = highlightDao.updateHighlight(highlight)
+
+    suspend fun deleteHighlight(highlight: Highlight) = highlightDao.deleteHighlight(highlight)
+
+    suspend fun deleteHighlightById(id: Long) = highlightDao.deleteHighlightById(id)
 
     fun getBooksWithProgressByGenre(genre: String): Flow<List<BookWithDetails>> {
         return combine(
@@ -80,6 +115,14 @@ class BookRepository(
         val chaptersWithBookId = chapters.map { it.copy(bookId = bookId) }
         chapterDao.insertChapters(chaptersWithBookId)
         return bookId
+    }
+
+    suspend fun updateChapterContent(chapterId: Long, content: String) {
+        chapterDao.updateChapterContent(chapterId, content)
+    }
+
+    suspend fun updateChapterContentByPage(bookId: Long, pageNumber: Int, content: String) {
+        chapterDao.updateChapterContentByPage(bookId, pageNumber, content)
     }
 
     suspend fun deleteBook(book: Book) {

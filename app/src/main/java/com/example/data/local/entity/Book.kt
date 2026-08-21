@@ -15,6 +15,7 @@ data class Book(
     val genre: String, // e.g. "Design", "Psychology", "Novels"
     val description: String = "",
     val isImportedPdf: Boolean = false,
+    val isScanned: Boolean = false,
     val pdfFilePath: String = "",
     val fileType: String = "TEXT", // "PDF", "EPUB", "TEXT"
     val source: String = "local", // "local", "seed", "internet_archive", "gutenberg", "doab"

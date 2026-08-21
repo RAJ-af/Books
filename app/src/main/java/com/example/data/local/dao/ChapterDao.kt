@@ -35,4 +35,10 @@ interface ChapterDao {
 
     @Query("DELETE FROM chapters WHERE bookId = :bookId")
     suspend fun deleteChaptersForBook(bookId: Long)
+
+    @Query("UPDATE chapters SET content = :content WHERE id = :chapterId")
+    suspend fun updateChapterContent(chapterId: Long, content: String)
+
+    @Query("UPDATE chapters SET content = :content WHERE bookId = :bookId AND number = :pageNumber")
+    suspend fun updateChapterContentByPage(bookId: Long, pageNumber: Int, content: String)
 }

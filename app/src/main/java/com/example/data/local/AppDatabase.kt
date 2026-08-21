@@ -6,10 +6,14 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.data.local.dao.BookDao
+import com.example.data.local.dao.BookmarkDao
 import com.example.data.local.dao.ChapterDao
+import com.example.data.local.dao.HighlightDao
 import com.example.data.local.dao.ReadingProgressDao
 import com.example.data.local.entity.Book
+import com.example.data.local.entity.Bookmark
 import com.example.data.local.entity.Chapter
+import com.example.data.local.entity.Highlight
 import com.example.data.local.entity.ReadingProgress
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -19,9 +23,11 @@ import kotlinx.coroutines.launch
     entities = [
         Book::class,
         Chapter::class,
-        ReadingProgress::class
+        ReadingProgress::class,
+        Bookmark::class,
+        Highlight::class
     ],
-    version = 4,
+    version = 6,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -29,6 +35,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun bookDao(): BookDao
     abstract fun chapterDao(): ChapterDao
     abstract fun readingProgressDao(): ReadingProgressDao
+    abstract fun bookmarkDao(): BookmarkDao
+    abstract fun highlightDao(): HighlightDao
 
     companion object {
         @Volatile

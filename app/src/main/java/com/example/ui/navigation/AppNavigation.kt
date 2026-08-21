@@ -12,6 +12,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.example.ui.bookmarks.BookmarksHighlightsScreen
+import com.example.ui.bookmarks.BookmarksHighlightsViewModel
 import com.example.ui.category.CategoryGridScreen
 import com.example.ui.detail.BookDetailScreen
 import com.example.ui.detail.BookDetailViewModel
@@ -126,20 +128,59 @@ fun AppNavigation(
                 onBackClick = { navController.popBackStack() },
                 onReadBookClick = { bId, chapterId ->
                     navController.navigate(Screen.Reader.createRoute(bId, chapterId))
+                },
+                onBookmarksClick = { bId ->
+                    navController.navigate(Screen.BookmarksAndHighlights.createRoute(bId))
                 }
             )
         }
 
-        // 5. Reader Screen
+        // 5. Bookmarks & Highlights Screen
+        composable(
+            route = Screen.BookmarksAndHighlights.route,
+            arguments = listOf(
+                navArgument("bookId") { type = NavType.LongType }
+            )
+        ) { backStackEntry ->
+            val bookId = backStackEntry.arguments?.getLong("bookId") ?: 1L
+            val bmViewModel: BookmarksHighlightsViewModel = viewModel(
+                key = "bookmarks_$bookId",
+                factory = object : ViewModelProvider.Factory {
+                    @Suppress("UNCHECKED_CAST")
+                    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                        return BookmarksHighlightsViewModel(application, bookId) as T
+                    }
+                }
+            )
+            BookmarksHighlightsScreen(
+                viewModel = bmViewModel,
+                onBackClick = { navController.popBackStack() },
+                onJumpToPosition = { chapterId, page, paragraph ->
+                    navController.navigate(Screen.Reader.createRoute(bookId, chapterId, page, paragraph))
+                }
+            )
+        }
+
+        // 6. Reader Screen
         composable(
             route = Screen.Reader.route,
             arguments = listOf(
                 navArgument("bookId") { type = NavType.LongType },
-                navArgument("chapterId") { type = NavType.LongType }
+                navArgument("chapterId") { type = NavType.LongType },
+                navArgument("page") {
+                    type = NavType.IntType
+                    defaultValue = 0
+                },
+                navArgument("paragraph") {
+                    type = NavType.IntType
+                    defaultValue = 0
+                }
             )
         ) { backStackEntry ->
             val bookId = backStackEntry.arguments?.getLong("bookId") ?: 1L
             val chapterId = backStackEntry.arguments?.getLong("chapterId") ?: 1L
+            val page = backStackEntry.arguments?.getInt("page") ?: 0
+            val paragraph = backStackEntry.arguments?.getInt("paragraph") ?: 0
             val readerViewModel: ReaderViewModel = viewModel(
                 key = "reader_${bookId}_$chapterId",
                 factory = object : ViewModelProvider.Factory {
@@ -151,7 +192,9 @@ fun AppNavigation(
             )
             ReaderScreen(
                 viewModel = readerViewModel,
-                onBackClick = { navController.popBackStack() }
+                onBackClick = { navController.popBackStack() },
+                initialPage = page,
+                initialParagraph = paragraph
             )
         }
     }

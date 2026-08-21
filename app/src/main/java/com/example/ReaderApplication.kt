@@ -21,7 +21,9 @@ class ReaderApplication : Application() {
         BookRepository(
             bookDao = database.bookDao(),
             chapterDao = database.chapterDao(),
-            readingProgressDao = database.readingProgressDao()
+            readingProgressDao = database.readingProgressDao(),
+            bookmarkDao = database.bookmarkDao(),
+            highlightDao = database.highlightDao()
         )
     }
 

@@ -184,8 +184,8 @@ fun LibraryScreen(
                     viewModel.addNewBook(title, author, genre, description, colorHex)
                     showAddBookSheet = false
                 },
-                onAddPdfBook = { title, author, genre, description, pdfPath, coverPath, pageCount, colorHex ->
-                    viewModel.importPdfBook(title, author, genre, description, pdfPath, coverPath, pageCount, colorHex)
+                onAddPdfBook = { title, author, genre, description, pdfPath, coverPath, pageCount, colorHex, isScanned, pageTexts ->
+                    viewModel.importPdfBook(title, author, genre, description, pdfPath, coverPath, pageCount, colorHex, isScanned, pageTexts)
                     showAddBookSheet = false
                 }
             )

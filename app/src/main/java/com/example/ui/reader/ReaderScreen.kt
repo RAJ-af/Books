@@ -36,42 +36,59 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.WbSunny
-import com.example.ui.audio.AudiobookPlayerSheet
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalTextToolbar
+import androidx.compose.ui.platform.TextToolbar
+import androidx.compose.ui.platform.TextToolbarStatus
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -84,6 +101,7 @@ import com.example.data.settings.ReaderFontStyle
 import com.example.data.settings.ReaderLineSpacing
 import com.example.data.settings.ReaderSettings
 import com.example.data.settings.ReaderThemeMode
+import com.example.ui.audio.AudiobookPlayerSheet
 import com.example.ui.theme.ContentSerif
 import com.example.ui.theme.EditorialSerif
 import com.example.ui.theme.ObsidianBlack
@@ -91,17 +109,26 @@ import com.example.ui.theme.SystemSans
 import com.example.ui.theme.TextMuted
 import com.example.util.PdfHelper
 
+enum class PdfReaderMode {
+    ORIGINAL,
+    REFLOW
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReaderScreen(
     viewModel: ReaderViewModel,
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    initialPage: Int = 0,
+    initialParagraph: Int = 0
 ) {
     val book by viewModel.book.collectAsStateWithLifecycle()
     val chapters by viewModel.chapters.collectAsStateWithLifecycle()
     val currentChapterId by viewModel.currentChapterId.collectAsStateWithLifecycle()
     val settings by viewModel.readerSettings.collectAsStateWithLifecycle()
     val playerState by viewModel.audioPlayerManager.playerState.collectAsStateWithLifecycle()
+    val bookmarks by viewModel.bookmarks.collectAsStateWithLifecycle()
+    val highlights by viewModel.highlights.collectAsStateWithLifecycle()
 
     val currentChapter = chapters.find { it.id == currentChapterId } ?: chapters.firstOrNull()
     val currentChapterIndex = chapters.indexOfFirst { it.id == currentChapter?.id }.let { if (it == -1) 0 else it }
@@ -110,6 +137,76 @@ fun ReaderScreen(
 
     val listState = rememberLazyListState()
     var showFormatSheet by remember { mutableStateOf(false) }
+    var pdfReaderMode by rememberSaveable { mutableStateOf(PdfReaderMode.ORIGINAL) }
+
+    val chapterHighlights = remember(highlights, currentChapterId) {
+        highlights.filter { it.chapterId == currentChapterId }
+    }
+
+    val firstVisibleIndex = remember { derivedStateOf { listState.firstVisibleItemIndex } }
+
+    val isCurrentPositionBookmarked = remember(bookmarks, currentChapterId, currentChapterIndex, firstVisibleIndex.value, isPdf) {
+        bookmarks.any { bm ->
+            bm.chapterId == currentChapterId &&
+            if (isPdf) bm.pageNumber == currentChapterIndex else bm.scrollAnchor == firstVisibleIndex.value
+        }
+    }
+
+    val clipboardManager = LocalClipboardManager.current
+    var selectedTextForHighlight by remember { mutableStateOf<String?>(null) }
+    var showNoteDialog by remember { mutableStateOf(false) }
+    var noteText by remember { mutableStateOf("") }
+    var selectedColorHex by remember { mutableStateOf("#FEF08A") }
+
+    val defaultTextToolbar = LocalTextToolbar.current
+    val customTextToolbar = remember(defaultTextToolbar, clipboardManager) {
+        object : TextToolbar {
+            override val status: TextToolbarStatus
+                get() = try { defaultTextToolbar.status } catch (_: Throwable) { TextToolbarStatus.Hidden }
+
+            override fun hide() {
+                try {
+                    defaultTextToolbar.hide()
+                } catch (_: Throwable) {}
+            }
+
+            override fun showMenu(
+                rect: Rect,
+                onCopyRequested: (() -> Unit)?,
+                onPasteRequested: (() -> Unit)?,
+                onCutRequested: (() -> Unit)?,
+                onSelectAllRequested: (() -> Unit)?
+            ) {
+                val wrappedCopy = onCopyRequested?.let { originalCopy ->
+                    {
+                        originalCopy.invoke()
+                        val text = clipboardManager.getText()?.text?.toString()?.trim()
+                        if (!text.isNullOrBlank()) {
+                            selectedTextForHighlight = text
+                        }
+                    }
+                }
+                try {
+                    defaultTextToolbar.showMenu(rect, wrappedCopy ?: onCopyRequested, onPasteRequested, onCutRequested, onSelectAllRequested)
+                } catch (_: Throwable) {}
+            }
+        }
+    }
+
+    DisposableEffect(currentChapterId, pdfReaderMode) {
+        onDispose {
+            try {
+                customTextToolbar.hide()
+            } catch (_: Throwable) {}
+        }
+    }
+
+    // Jump to initial paragraph if requested
+    LaunchedEffect(initialParagraph) {
+        if (initialParagraph > 0 && !isPdf) {
+            listState.scrollToItem(initialParagraph)
+        }
+    }
 
     // Color theme definition matching screenshot palette
     val (backgroundColor, textColor, pillBgColor, bottomBarBorderColor) = when (settings.theme) {
@@ -176,8 +273,8 @@ fun ReaderScreen(
             }
             .testTag("reader_screen_container")
     ) {
-        // Main reading content (PDF Page or Typography LazyColumn)
-        if (isPdf) {
+        // Main reading content (PDF Original Page OR Typography LazyColumn for Text/Reflow)
+        if (isPdf && pdfReaderMode == PdfReaderMode.ORIGINAL) {
             val pdfPath = book?.pdfFilePath.orEmpty()
             PdfPageView(
                 pdfPath = pdfPath,
@@ -194,41 +291,146 @@ fun ReaderScreen(
                     CircularProgressIndicator(color = textColor)
                 }
             } else {
+                val isReflow = isPdf && pdfReaderMode == PdfReaderMode.REFLOW
+
+                // Trigger on-demand single page OCR if in reflow mode and text is empty
+                LaunchedEffect(currentChapter.id, isReflow) {
+                    if (isReflow && currentChapter.content.isBlank()) {
+                        viewModel.triggerOnDemandOcrForCurrentPage()
+                    }
+                }
+
                 val paragraphs = remember(currentChapter.content) {
                     currentChapter.content.split("\n\n").filter { it.isNotBlank() }
                 }
 
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .testTag("reader_content_scroll"),
-                    contentPadding = PaddingValues(
-                        start = 26.dp,
-                        end = 26.dp,
-                        top = 100.dp,   // Space below top bar
-                        bottom = 140.dp // Generous space so floating bottom bar never obstructs text
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(22.dp)
-                ) {
-                    // Paragraphs with book-grade editorial typography
-                    itemsIndexed(paragraphs) { index, paragraph ->
-                        val isFirstParagraph = index == 0
-
-                        Text(
-                            text = paragraph.trim(),
-                            style = MaterialTheme.typography.bodyLarge.copy(
-                                fontFamily = activeFontFamily,
-                                fontSize = (if (isFirstParagraph) settings.fontSizeSp + 1f else settings.fontSizeSp).sp,
-                                lineHeight = lineHeight,
-                                fontStyle = if (isFirstParagraph) FontStyle.Italic else FontStyle.Normal,
-                                fontWeight = if (isFirstParagraph) FontWeight.Normal else FontWeight.Normal,
-                                color = textColor
+                CompositionLocalProvider(LocalTextToolbar provides customTextToolbar) {
+                    SelectionContainer {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .testTag("reader_content_scroll"),
+                            contentPadding = PaddingValues(
+                                start = 26.dp,
+                                end = 26.dp,
+                                top = 100.dp,   // Space below top bar
+                                bottom = 150.dp // Generous space so floating bottom bar never obstructs text
                             ),
-                            textAlign = TextAlign.Start,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
+                            verticalArrangement = Arrangement.spacedBy(22.dp)
+                        ) {
+                            // Disclaimer Banner for Reflow Mode
+                            if (isReflow) {
+                                item {
+                                    Surface(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(bottom = 8.dp),
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = Color(0xFFFEF3C7)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Info,
+                                                contentDescription = null,
+                                                tint = Color(0xFFD97706),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = "Reflow Mode • OCR-generated text, may contain minor errors",
+                                                fontSize = 11.5.sp,
+                                                fontFamily = SystemSans,
+                                                color = Color(0xFF92400E),
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (paragraphs.isEmpty()) {
+                                item {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 48.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(36.dp),
+                                            color = Color(0xFFD97706),
+                                            strokeWidth = 3.dp
+                                        )
+                                        Spacer(modifier = Modifier.height(16.dp))
+                                        Text(
+                                            text = "Extracting text with ML Kit OCR...",
+                                            style = MaterialTheme.typography.titleSmall.copy(
+                                                fontFamily = EditorialSerif,
+                                                fontWeight = FontWeight.Bold,
+                                                color = textColor
+                                            )
+                                        )
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Text(
+                                            text = "WorkManager background pipeline active",
+                                            style = MaterialTheme.typography.bodySmall.copy(
+                                                fontFamily = SystemSans,
+                                                color = textColor.copy(alpha = 0.6f)
+                                            )
+                                        )
+                                    }
+                                }
+                            } else {
+                                // Paragraphs with book-grade editorial typography and highlights
+                                itemsIndexed(paragraphs) { index, paragraph ->
+                            val isFirstParagraph = index == 0
+                            val rawText = paragraph.trim()
+
+                            val annotatedString = remember(rawText, chapterHighlights) {
+                                buildAnnotatedString {
+                                    append(rawText)
+                                    val paraHighlights = chapterHighlights.filter { it.paragraphIndex == index }
+                                    paraHighlights.forEach { hl ->
+                                        val start = hl.startOffset.coerceIn(0, rawText.length)
+                                        val end = hl.endOffset.coerceIn(start, rawText.length)
+                                        if (end > start) {
+                                            val color = try {
+                                                Color(android.graphics.Color.parseColor(hl.colorHex))
+                                            } catch (_: Exception) {
+                                                Color(0xFFFEF08A)
+                                            }
+                                            addStyle(
+                                                style = SpanStyle(
+                                                    background = color.copy(alpha = 0.85f),
+                                                    color = Color(0xFF1E1C1A)
+                                                ),
+                                                start = start,
+                                                end = end
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Text(
+                                text = annotatedString,
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontFamily = activeFontFamily,
+                                    fontSize = (if (isFirstParagraph) settings.fontSizeSp + 1f else settings.fontSizeSp).sp,
+                                    lineHeight = lineHeight,
+                                    fontStyle = if (isFirstParagraph) FontStyle.Italic else FontStyle.Normal,
+                                    fontWeight = FontWeight.Normal,
+                                    color = textColor
+                                ),
+                                textAlign = TextAlign.Start,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        }
 
                     // Clean & subtle Chapter End Marker (No ugly giant card or next buttons)
                     item {
@@ -280,6 +482,7 @@ fun ReaderScreen(
                     }
                 }
             }
+            }
         }
 
         // Top Gradient Scrim for readable header overlay
@@ -298,26 +501,31 @@ fun ReaderScreen(
                 )
         )
 
-        // TOP BAR: Matching user reference image
-        // Left: Circular dark matte button with white back arrow
-        // Center: "Chapter 4" or "Page 4" + Subtitle
-        // Right: Circular dark matte button with "Aa"
+        // TOP BAR
         ReaderHeaderTopBar(
             chapterNumber = currentChapter?.number ?: (currentChapterIndex + 1),
             chapterSubtitle = if (isPdf) (book?.title ?: "PDF Document") else (currentChapter?.subtitle?.takeIf { it.isNotBlank() } ?: (book?.title ?: "Feedback")),
             isPdf = isPdf,
+            pdfReaderMode = pdfReaderMode,
+            onPdfReaderModeChange = { pdfReaderMode = it },
             hasAudioPlayer = playerState.tracks.isNotEmpty(),
+            isBookmarked = isCurrentPositionBookmarked,
             textColor = textColor,
             onBackClick = onBackClick,
             onFormatClick = { showFormatSheet = true },
+            onBookmarkClick = {
+                viewModel.toggleBookmark(
+                    pageNumber = currentChapterIndex,
+                    paragraphIndex = firstVisibleIndex.value
+                )
+            },
             onAudioClick = { viewModel.audioPlayerManager.showPlayerSheet() },
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .statusBarsPadding()
         )
 
-        // BOTTOM FLOATING PILL BAR: Matching user reference image
-        // Rounded frosted pill with left chevron, center "Chapter 4 / 12" (or "Page 4 / 12") + sleek black progress bar, right chevron
+        // BOTTOM FLOATING PILL BAR
         ReaderFloatingBottomBar(
             currentChapterNumber = currentChapterIndex + 1,
             totalChapters = totalChapters,
@@ -335,6 +543,199 @@ fun ReaderScreen(
                 .padding(bottom = 18.dp)
         )
 
+        // Floating Text Highlight Selection Bar
+        if (!selectedTextForHighlight.isNullOrBlank() && !isPdf) {
+            val selText = selectedTextForHighlight!!
+            val paragraphs = remember(currentChapter?.content) {
+                currentChapter?.content?.split("\n\n")?.filter { it.isNotBlank() } ?: emptyList()
+            }
+
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 85.dp, start = 16.dp, end = 16.dp)
+                    .shadow(12.dp, RoundedCornerShape(20.dp))
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color(0xFF22201E))
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                    .testTag("floating_highlight_toolbar")
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "“${selText.take(35)}${if (selText.length > 35) "..." else ""}”",
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontFamily = EditorialSerif,
+                                color = Color.White.copy(alpha = 0.85f),
+                                fontSize = 13.sp
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        IconButton(
+                            onClick = { selectedTextForHighlight = null },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close highlight toolbar",
+                                tint = Color.White.copy(alpha = 0.6f),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Muted highlight color options (Soft Yellow, Soft Green, Soft Pink, Soft Blue, Soft Peach)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        val highlightColors = listOf(
+                            "#FEF08A" to Color(0xFFFEF08A), // Soft Yellow
+                            "#BBF7D0" to Color(0xFFBBF7D0), // Soft Green
+                            "#FBCFE8" to Color(0xFFFBCFE8), // Soft Pink
+                            "#BFDBFE" to Color(0xFFBFDBFE), // Soft Blue
+                            "#FED7AA" to Color(0xFFFED7AA)  // Soft Peach
+                        )
+
+                        highlightColors.forEach { (hex, color) ->
+                            Box(
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .clip(CircleShape)
+                                    .background(color)
+                                    .border(1.dp, Color.White.copy(alpha = 0.3f), CircleShape)
+                                    .clickable {
+                                        var pIndex = paragraphs.indexOfFirst { it.contains(selText) }
+                                        if (pIndex == -1) pIndex = 0
+                                        val start = if (pIndex < paragraphs.size) paragraphs[pIndex].indexOf(selText).coerceAtLeast(0) else 0
+                                        val end = start + selText.length
+
+                                        viewModel.addHighlight(
+                                            paragraphIndex = pIndex,
+                                            startOffset = start,
+                                            endOffset = end,
+                                            highlightedText = selText,
+                                            colorHex = hex
+                                        )
+                                        selectedTextForHighlight = null
+                                    }
+                                    .testTag("highlight_color_$hex")
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(4.dp))
+
+                        // Add Note Button
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.White.copy(alpha = 0.15f))
+                                .clickable {
+                                    selectedColorHex = "#FEF08A"
+                                    noteText = ""
+                                    showNoteDialog = true
+                                }
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.EditNote,
+                                    contentDescription = "Add Note",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Note",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        color = Color.White,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Note Input Dialog
+        if (showNoteDialog && !selectedTextForHighlight.isNullOrBlank()) {
+            val selText = selectedTextForHighlight!!
+            val paragraphs = remember(currentChapter?.content) {
+                currentChapter?.content?.split("\n\n")?.filter { it.isNotBlank() } ?: emptyList()
+            }
+
+            AlertDialog(
+                onDismissRequest = { showNoteDialog = false },
+                title = {
+                    Text(
+                        text = "Add Note to Highlight",
+                        fontFamily = EditorialSerif,
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                text = {
+                    Column {
+                        Text(
+                            text = "“${selText.take(60)}${if (selText.length > 60) "..." else ""}”",
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontFamily = EditorialSerif,
+                                color = TextMuted
+                            )
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedTextField(
+                            value = noteText,
+                            onValueChange = { noteText = it },
+                            placeholder = { Text("Write your thoughts...") },
+                            modifier = Modifier.fillMaxWidth(),
+                            maxLines = 4
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            var pIndex = paragraphs.indexOfFirst { it.contains(selText) }
+                            if (pIndex == -1) pIndex = 0
+                            val start = if (pIndex < paragraphs.size) paragraphs[pIndex].indexOf(selText).coerceAtLeast(0) else 0
+                            val end = start + selText.length
+
+                            viewModel.addHighlight(
+                                paragraphIndex = pIndex,
+                                startOffset = start,
+                                endOffset = end,
+                                highlightedText = selText,
+                                colorHex = selectedColorHex,
+                                note = noteText
+                            )
+                            selectedTextForHighlight = null
+                            showNoteDialog = false
+                        }
+                    ) {
+                        Text("Save Highlight", color = ObsidianBlack, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showNoteDialog = false }) {
+                        Text("Cancel", color = TextMuted)
+                    }
+                },
+                containerColor = Color.White
+            )
+        }
+
         // Dimming overlay based on brightness setting (0-100%)
         if (settings.brightness < 100) {
             val dimAlpha = ((100 - settings.brightness) / 100f) * 0.45f
@@ -345,11 +746,11 @@ fun ReaderScreen(
             )
         }
 
-        // Reading Settings Modal Bottom Sheet matching the second screenshot
+        // Reading Settings Modal Bottom Sheet
         if (showFormatSheet) {
             ReaderSettingsBottomSheet(
                 settings = settings,
-                isPdf = isPdf,
+                isPdf = isPdf && pdfReaderMode == PdfReaderMode.ORIGINAL,
                 onDismiss = { showFormatSheet = false },
                 onFontSizeChange = { viewModel.updateFontSize(it) },
                 onFontStyleChange = { viewModel.updateFontStyle(it) },
@@ -375,6 +776,7 @@ fun ReaderScreen(
             )
         }
     }
+}
 }
 
 /**
@@ -470,10 +872,14 @@ fun ReaderHeaderTopBar(
     chapterNumber: Int,
     chapterSubtitle: String,
     isPdf: Boolean = false,
+    pdfReaderMode: PdfReaderMode = PdfReaderMode.ORIGINAL,
+    onPdfReaderModeChange: (PdfReaderMode) -> Unit = {},
     hasAudioPlayer: Boolean = false,
+    isBookmarked: Boolean = false,
     textColor: Color,
     onBackClick: () -> Unit,
     onFormatClick: () -> Unit,
+    onBookmarkClick: () -> Unit = {},
     onAudioClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -503,44 +909,112 @@ fun ReaderHeaderTopBar(
             )
         }
 
-        // Center: Chapter/Page title and subtitle
+        // Center: Chapter/Page title and subtitle or Mode Switcher
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
                 .weight(1f)
-                .padding(horizontal = 14.dp)
+                .padding(horizontal = 8.dp)
         ) {
             Text(
                 text = if (isPdf) "Page $chapterNumber" else "Chapter $chapterNumber",
                 style = MaterialTheme.typography.titleMedium.copy(
                     fontFamily = EditorialSerif,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 17.sp,
+                    fontSize = 16.sp,
                     color = textColor
                 ),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
 
-            Spacer(modifier = Modifier.height(2.dp))
+            if (isPdf) {
+                Spacer(modifier = Modifier.height(4.dp))
+                // Mode Switcher Pill [ Original | Reflow ]
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color(0xFF22201E),
+                    modifier = Modifier.height(28.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(2.dp)
+                    ) {
+                        Surface(
+                            onClick = { onPdfReaderModeChange(PdfReaderMode.ORIGINAL) },
+                            shape = RoundedCornerShape(14.dp),
+                            color = if (pdfReaderMode == PdfReaderMode.ORIGINAL) Color(0xFFD97706) else Color.Transparent,
+                            modifier = Modifier.height(24.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 10.dp)) {
+                                Text(
+                                    text = "Original",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = SystemSans,
+                                    color = Color.White
+                                )
+                            }
+                        }
 
-            Text(
-                text = chapterSubtitle,
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontFamily = ContentSerif,
-                    color = textColor.copy(alpha = 0.55f),
-                    fontSize = 13.sp
-                ),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+                        Surface(
+                            onClick = { onPdfReaderModeChange(PdfReaderMode.REFLOW) },
+                            shape = RoundedCornerShape(14.dp),
+                            color = if (pdfReaderMode == PdfReaderMode.REFLOW) Color(0xFFD97706) else Color.Transparent,
+                            modifier = Modifier.height(24.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 10.dp)) {
+                                Text(
+                                    text = "Reflow",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = SystemSans,
+                                    color = Color.White
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                Spacer(modifier = Modifier.height(2.dp))
+
+                Text(
+                    text = chapterSubtitle,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontFamily = ContentSerif,
+                        color = textColor.copy(alpha = 0.55f),
+                        fontSize = 12.5.sp
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
 
-        // Right: Audio player button (if active) and "Aa" button
+        // Right: Bookmark, Audio player, and "Aa" format buttons
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            // Bookmark Button
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .shadow(3.dp, CircleShape, spotColor = ObsidianBlack.copy(alpha = 0.25f))
+                    .clip(CircleShape)
+                    .background(if (isBookmarked) Color(0xFFD97706) else Color(0xFF22201E))
+                    .clickable(onClick = onBookmarkClick)
+                    .testTag("reader_bookmark_button"),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                    contentDescription = "Bookmark",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
             if (hasAudioPlayer) {
                 Box(
                     modifier = Modifier

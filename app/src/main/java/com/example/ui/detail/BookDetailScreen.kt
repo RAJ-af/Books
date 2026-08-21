@@ -29,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AutoStories
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -88,7 +89,8 @@ import com.example.ui.theme.WarmOffWhite
 fun BookDetailScreen(
     viewModel: BookDetailViewModel,
     onBackClick: () -> Unit,
-    onReadBookClick: (bookId: Long, chapterId: Long) -> Unit
+    onReadBookClick: (bookId: Long, chapterId: Long) -> Unit,
+    onBookmarksClick: (bookId: Long) -> Unit = {}
 ) {
     val book by viewModel.book.collectAsStateWithLifecycle()
     val chapters by viewModel.chapters.collectAsStateWithLifecycle()
@@ -148,6 +150,7 @@ fun BookDetailScreen(
                     onBackClick = onBackClick,
                     showMenu = showMoreMenu,
                     onToggleMenu = { showMoreMenu = it },
+                    onBookmarksClick = { book?.id?.let { onBookmarksClick(it) } },
                     onMarkFinished = {
                         val lastChapter = chapters.lastOrNull()
                         if (lastChapter != null) {
@@ -700,6 +703,7 @@ fun BookDetailTopBar(
     onBackClick: () -> Unit,
     showMenu: Boolean,
     onToggleMenu: (Boolean) -> Unit,
+    onBookmarksClick: () -> Unit,
     onMarkFinished: () -> Unit,
     onResetProgress: () -> Unit
 ) {
@@ -754,6 +758,26 @@ fun BookDetailTopBar(
                 onDismissRequest = { onToggleMenu(false) },
                 modifier = Modifier.background(WarmOffWhite)
             ) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            "Bookmarks & Highlights",
+                            fontFamily = SystemSans,
+                            fontWeight = FontWeight.Medium
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.BookmarkBorder,
+                            contentDescription = null,
+                            tint = ObsidianBlack
+                        )
+                    },
+                    onClick = {
+                        onToggleMenu(false)
+                        onBookmarksClick()
+                    }
+                )
                 DropdownMenuItem(
                     text = {
                         Text(

@@ -195,7 +195,9 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         pdfPath: String,
         coverPath: String,
         pageCount: Int,
-        colorHex: String = "#285698"
+        colorHex: String = "#285698",
+        isScanned: Boolean = false,
+        pageTexts: List<String> = emptyList()
     ) {
         viewModelScope.launch {
             val book = Book(
@@ -208,19 +210,21 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 coverImageUri = coverPath,
                 pdfFilePath = pdfPath,
                 isImportedPdf = true,
+                isScanned = isScanned,
                 source = "local",
                 colorHex = colorHex
             )
 
             // Generate one chapter per PDF page so navigation/progress maps 1:1
             val chapters = (1..book.pageCount).map { pageNum ->
+                val text = pageTexts.getOrNull(pageNum - 1) ?: ""
                 Chapter(
                     bookId = 0L,
                     number = pageNum,
                     title = "Page $pageNum",
                     subtitle = if (pageNum == 1) "Cover & Start" else "Section $pageNum",
                     estimatedReadMinutes = 2,
-                    content = ""
+                    content = text
                 )
             }
 
@@ -232,6 +236,11 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                     chapterId = firstChapter.id,
                     percentComplete = 0f
                 )
+            }
+
+            // If scanned (image-only / low text per page), start WorkManager background OCR job
+            if (isScanned) {
+                com.example.util.OcrManager.enqueueOcrJob(getApplication(), insertedId, pdfPath)
             }
         }
     }
